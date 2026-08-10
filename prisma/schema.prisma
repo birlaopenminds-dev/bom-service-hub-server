@@ -1,0 +1,218 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  super_admin
+  admin
+  manager
+  hod
+  user
+}
+
+enum Priority {
+  low
+  medium
+  high
+  critical
+}
+
+enum TicketStatus {
+  open
+  wip
+  resolved
+  closed
+}
+
+enum TokenType {
+  access
+  refresh
+}
+
+enum EmailStatus {
+  sent
+  failed
+  queued
+}
+
+model Department {
+  id         Int      @id @default(autoincrement())
+  name       String   @unique
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+
+  categories Category[]
+  users      User[]
+  tickets    Ticket[]
+}
+
+model Category {
+  id            Int      @id @default(autoincrement())
+  department_id Int
+  name          String
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+
+  department    Department    @relation(fields: [department_id], references: [id], onDelete: Cascade)
+  subcategories Subcategory[]
+  tickets       Ticket[]
+
+  @@unique([department_id, name])
+  @@index([department_id])
+}
+
+model Subcategory {
+  id                  Int      @id @default(autoincrement())
+  category_id         Int
+  name                String
+  default_assignee_id Int?
+  tat_hours           Int      @default(24)
+  is_active           Boolean  @default(true)
+  created_at          DateTime @default(now())
+
+  category         Category @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  default_assignee User?    @relation("DefaultAssignee", fields: [default_assignee_id], references: [id], onDelete: SetNull)
+  tickets          Ticket[]
+
+  @@unique([category_id, name])
+  @@index([category_id])
+  @@index([default_assignee_id])
+}
+
+model User {
+  id                   Int       @id @default(autoincrement())
+  name                 String
+  email                String    @unique
+  mobile               String?
+  password_hash        String
+  password_changed     Boolean   @default(false)
+  role                 Role
+  department_id        Int?
+  reporting_manager_id Int?
+  hod_id               Int?
+  is_active            Boolean   @default(true)
+  created_at           DateTime  @default(now())
+  last_login_at        DateTime?
+
+  department             Department?        @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  reporting_manager      User?              @relation("ReportingManager", fields: [reporting_manager_id], references: [id], onDelete: SetNull)
+  subordinates           User[]             @relation("ReportingManager")
+  hod                    User?              @relation("HOD", fields: [hod_id], references: [id], onDelete: SetNull)
+  hod_subordinates       User[]             @relation("HOD")
+  assigned_subcategories Subcategory[]     @relation("DefaultAssignee")
+  tickets_created        Ticket[]           @relation("TicketCreator")
+  tickets_assigned       Ticket[]           @relation("TicketAssignee")
+  ticket_logs            TicketLog[]
+  audit_logs             AuditLog[]
+  blacklisted_tokens     BlacklistedToken[]
+
+  @@index([email])
+  @@index([role])
+  @@index([department_id])
+}
+
+model Ticket {
+  id             Int          @id @default(autoincrement())
+  ticket_no      String       @unique
+  user_id        Int
+  department_id  Int
+  category_id    Int
+  subcategory_id Int
+  priority       Priority
+  subject        String
+  description    String       @db.Text
+  assigned_to    Int?
+  status         TicketStatus
+  due_at         DateTime
+  resolved_at    DateTime?
+  escalated_at   DateTime?
+  created_at     DateTime     @default(now())
+  updated_at     DateTime     @updatedAt
+
+  user        User        @relation("TicketCreator", fields: [user_id], references: [id])
+  department  Department  @relation(fields: [department_id], references: [id])
+  category    Category    @relation(fields: [category_id], references: [id])
+  subcategory Subcategory @relation(fields: [subcategory_id], references: [id])
+  assignee    User?       @relation("TicketAssignee", fields: [assigned_to], references: [id], onDelete: SetNull)
+
+  attachments TicketAttachment[]
+  logs        TicketLog[]
+
+  @@index([ticket_no])
+  @@index([status])
+  @@index([user_id])
+  @@index([assigned_to])
+  @@index([department_id])
+}
+
+model TicketAttachment {
+  id            Int      @id @default(autoincrement())
+  ticket_id     Int
+  original_name String
+  stored_name   String
+  file_size     Int
+  uploaded_at   DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+
+  @@index([ticket_id])
+}
+
+model TicketLog {
+  id         Int      @id @default(autoincrement())
+  ticket_id  Int
+  user_id    Int
+  action     String
+  details    Json?
+  created_at DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [user_id], references: [id])
+
+  @@index([ticket_id])
+  @@index([user_id])
+}
+
+model BlacklistedToken {
+  id             Int       @id @default(autoincrement())
+  token          String    @unique
+  token_type     TokenType
+  user_id        Int
+  blacklisted_at DateTime  @default(now())
+  expires_at     DateTime
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  user_id     Int
+  action      String
+  resource    String
+  resource_id String?
+  old_values  Json?
+  new_values  Json?
+  ip_address  String?
+  user_agent  String?
+  created_at  DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+model EmailLog {
+  id         Int         @id @default(autoincrement())
+  recipient  String
+  subject    String
+  template   String?
+  status     EmailStatus
+  error      String?
+  sent_at    DateTime    @default(now())
+  created_at DateTime    @default(now())
+}

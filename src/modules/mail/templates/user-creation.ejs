@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to BOM ServiceHub</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f8fafc;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+      line-height: 1.6;
+    }
+
+    .wrapper {
+      max-width: 600px;
+      margin: 20px auto;
+      background: #ffffff;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+
+    .brand-header {
+      background-color: #0f172a;
+      padding: 20px 24px;
+      text-align: center;
+    }
+
+    .header-title {
+      color: #ffffff;
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0;
+      text-align: center;
+      line-height: 1.3;
+    }
+
+    .action-banner {
+      background: #1e293b;
+      color: #ffffff;
+      padding: 12px 24px;
+      font-size: 15px;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .content {
+      padding: 24px;
+    }
+
+    .card {
+      background-color: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 18px;
+      margin-top: 16px;
+    }
+
+    .detail-row {
+      margin-bottom: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      border-bottom: 1px dashed #e2e8f0;
+      padding-bottom: 8px;
+    }
+
+    .detail-row:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .label {
+      font-weight: 600;
+      color: #475569;
+      width: 130px;
+      flex-shrink: 0;
+    }
+
+    .value {
+      color: #0f172a;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .footer {
+      background-color: #f1f5f9;
+      padding: 16px 24px;
+      font-size: 12px;
+      color: #64748b;
+      text-align: center;
+      border-top: 1px solid #e2e8f0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrapper">
+    <div class="brand-header">
+      <div class="header-title">
+        Welcome to BOM ServiceHub
+      </div>
+    </div>
+    <div class="action-banner">
+      Welcome to BOM ServiceHub
+    </div>
+    <div class="content">
+      <p>Hello <strong><%= name %></strong>,</p>
+      <p>Your user account has been successfully created on the BOM ServiceHub Portal.</p>
+
+      <div class="card">
+        <div class="detail-row">
+          <span class="label">Full Name:</span>
+          <span class="value"><strong><%= name %></strong></span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Email Address:</span>
+          <span class="value"><%= email %></span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Assigned Role:</span>
+          <span class="value"><strong style="text-transform: uppercase;"><%= role %></strong></span>
+        </div>
+      </div>
+
+      <p style="margin-top: 20px;">Please log in using your registered email address and update your password upon your first sign in.</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated notification. Please do not reply directly to this email.</p>
+    </div>
+  </div>
+</body>
+
+</html>
