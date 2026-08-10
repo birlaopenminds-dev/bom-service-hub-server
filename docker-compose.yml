@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # PostgreSQL Database Service
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: ${ENV_PREFIX:-uat}_bom_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-B!rl@@3210$}
+      POSTGRES_DB: ${POSTGRES_DB:-bom_service_hub_uat}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bom_service_hub_uat}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - server_internal
+
+  # ==========================================
+  # NestJS Backend API Service (Traefik Enabled)
+  # ==========================================
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${ENV_PREFIX:-uat}_bom_server
+    restart: always
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 5000
+      API_PREFIX: api
+      API_VERSION: 1
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-B!rl@@3210$}@postgres:5432/${POSTGRES_DB:-bom_service_hub_uat}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-qY0VmIw44R7oL7OVB8emoFiMgdc5KPLWSeHKQohe9zX}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-15m}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-3fMAetyzK26xAsQD7no84YMGHY9lf8tLDUmqpVFCyGe}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-7d}
+      COOKIE_SECRET: ${COOKIE_SECRET:-36tQczh4HRW1j9CGtQ7R0kdByzTmf2cFxI8PbsinbOw}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${DOMAIN_NAME:-uat-tickets.birlaopenminds.com},https://${API_DOMAIN_NAME:-uat-api.birlaopenminds.com}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - server_uploads:/app/public/uploads
+    networks:
+      - server_internal
+      - traefik_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-jkov}"
+      # Traefik Router & Service for Server (Scoped with ENV_PREFIX to avoid collisions)
+      - "traefik.http.routers.${ENV_PREFIX:-uat}_bom_server.rule=Host(`${API_DOMAIN_NAME:-uat-api.birlaopenminds.com}`) || (Host(`${DOMAIN_NAME:-uat-tickets.birlaopenminds.com}`) && PathPrefix(`/api`))"
+      - "traefik.http.routers.${ENV_PREFIX:-uat}_bom_server.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.${ENV_PREFIX:-uat}_bom_server.tls=true"
+      - "traefik.http.routers.${ENV_PREFIX:-uat}_bom_server.tls.certresolver=${LETSENCRYPT_RESOLVER:-letsencrypt}"
+      - "traefik.http.services.${ENV_PREFIX:-uat}_bom_server.loadbalancer.server.port=5000"
+
+volumes:
+  postgres_data:
+    name: ${ENV_PREFIX:-uat}_postgres_data
+  server_uploads:
+    name: ${ENV_PREFIX:-uat}_server_uploads
+
+networks:
+  server_internal:
+    driver: bridge
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik-jkov}
