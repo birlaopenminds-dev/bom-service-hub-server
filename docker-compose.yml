@@ -5,17 +5,17 @@ services:
   # PostgreSQL Database Service
   # ==========================================
   postgres:
-    image: postgres:16-alpine
-    container_name: ${ENV_PREFIX}_bom_postgres
-    restart: always
+    image: postgres:16.4-alpine
+    container_name: ${ENV_PREFIX:-uat}_bom_postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_DB: ${POSTGRES_DB:-bom_service_hub_uat}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bom_service_hub_uat}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,22 +29,29 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ${ENV_PREFIX}_bom_server
-    restart: always
+    container_name: ${ENV_PREFIX:-uat}_bom_server
+    restart: unless-stopped
     ports:
       - "${SERVER_HOST_PORT:-5000}:5000"
     environment:
-      NODE_ENV: ${NODE_ENV}
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 5000
       API_PREFIX: api
       API_VERSION: 1
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-15m}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-7d}
       COOKIE_SECRET: ${COOKIE_SECRET}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      MAIL_FROM: ${MAIL_FROM}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME}
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,9 +62,9 @@ services:
 
 volumes:
   postgres_data:
-    name: ${ENV_PREFIX}_postgres_data
+    name: ${ENV_PREFIX:-uat}_postgres_data
   server_uploads:
-    name: ${ENV_PREFIX}_server_uploads
+    name: ${ENV_PREFIX:-uat}_server_uploads
 
 networks:
   server_internal:
