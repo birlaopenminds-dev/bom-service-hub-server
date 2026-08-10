@@ -7,8 +7,11 @@
 
 # Environment variables
 .env
-.env.*
+.env.local
+.env.*.local
 !.env.example
+!.env.uat.example
+!.env.prod.example
 
 # Logs
 logs

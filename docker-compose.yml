@@ -42,7 +42,7 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-3fMAetyzK26xAsQD7no84YMGHY9lf8tLDUmqpVFCyGe}
       JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-7d}
       COOKIE_SECRET: ${COOKIE_SECRET:-36tQczh4HRW1j9CGtQ7R0kdByzTmf2cFxI8PbsinbOw}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${DOMAIN_NAME:-uat-tickets.birlaopenminds.com},https://${API_DOMAIN_NAME:-uat-api.birlaopenminds.com}}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${DOMAIN_NAME:-uat-tickets.birlaopenminds.com},https://${API_DOMAIN_NAME:-uat-admin.birlaopenminds.com}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,7 +55,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik-jkov}"
       # Traefik Router & Service for Server (Scoped with ENV_PREFIX to avoid collisions)
-      - "traefik.http.routers.${ENV_PREFIX:-uat}_bom_server.rule=Host(`${API_DOMAIN_NAME:-uat-api.birlaopenminds.com}`) || (Host(`${DOMAIN_NAME:-uat-tickets.birlaopenminds.com}`) && PathPrefix(`/api`))"
+      - "traefik.http.routers.${ENV_PREFIX:-uat}_bom_server.rule=Host(`${API_DOMAIN_NAME:-uat-admin.birlaopenminds.com}`) || (Host(`${DOMAIN_NAME:-uat-tickets.birlaopenminds.com}`) && PathPrefix(`/api`))"
       - "traefik.http.routers.${ENV_PREFIX:-uat}_bom_server.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
       - "traefik.http.routers.${ENV_PREFIX:-uat}_bom_server.tls=true"
       - "traefik.http.routers.${ENV_PREFIX:-uat}_bom_server.tls.certresolver=${LETSENCRYPT_RESOLVER:-letsencrypt}"
