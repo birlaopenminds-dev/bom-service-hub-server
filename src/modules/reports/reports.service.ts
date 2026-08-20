@@ -4,124 +4,157 @@ import { ReportFiltersDto } from './dto/report-filters.dto';
 import { ExcelExporter } from './export/excel-exporter';
 import { CsvExporter } from './export/csv-exporter';
 import { Response } from 'express';
-import { Prisma, Role, TicketStatus } from '@prisma/client';
+import { Prisma, Role, TicketStatus, Priority } from '@prisma/client';
+
+export function isTicketDelayed(t: any): boolean {
+  const now = new Date();
+  const dueAt = t.due_at ? new Date(t.due_at) : null;
+  if (!dueAt) return false;
+
+  const status = String(t.status || '').toLowerCase();
+  if (status === 'resolved' || status === 'closed') {
+    const resolvedAt = t.resolved_at ? new Date(t.resolved_at) : (t.updated_at ? new Date(t.updated_at) : null);
+    return resolvedAt ? resolvedAt > dueAt : false;
+  }
+
+  return dueAt < now;
+}
+
+export function filterTicketsByPerformance(tickets: any[], performanceStatus?: string): any[] {
+  if (!performanceStatus || performanceStatus.toUpperCase() === 'ALL') return tickets;
+
+  const key = performanceStatus.toUpperCase();
+  const now = new Date();
+
+  return tickets.filter((t) => {
+    const status = String(t.status || '').toLowerCase();
+    const dueAt = t.due_at ? new Date(t.due_at) : null;
+    const priority = String(t.priority || '').toLowerCase();
+    const delayed = isTicketDelayed(t);
+
+    switch (key) {
+      case 'OPEN':
+        return status === 'open';
+      case 'OPEN_DELAYED':
+        return status === 'open' && dueAt !== null && dueAt < now;
+      case 'WIP':
+        return status === 'wip';
+      case 'WIP_DELAYED':
+        return status === 'wip' && dueAt !== null && dueAt < now;
+      case 'RESOLVED_ON_TIME':
+        return status === 'resolved' && !delayed;
+      case 'RESOLVED_DELAYED':
+        return status === 'resolved' && delayed;
+      case 'CLOSED_ON_TIME':
+        return status === 'closed' && !delayed;
+      case 'CLOSED_DELAYED':
+        return status === 'closed' && delayed;
+      case 'UNASSIGNED':
+        return !t.assigned_to && (status === 'open' || status === 'wip');
+      case 'ESCALATED':
+        return Boolean(t.escalated_at);
+      case 'CRITICAL_HIGH_DELAYED':
+        return (priority === 'critical' || priority === 'high') && delayed;
+      case 'OVERDUE_ALL':
+        return delayed;
+      default:
+        return true;
+    }
+  });
+}
 
 @Injectable()
 export class ReportsService {
   constructor(private prisma: PrismaService) { }
 
-  async getSummaryMetrics(user: any, filters: ReportFiltersDto) {
+  private async getFilteredTickets(user: any, filters: ReportFiltersDto) {
+    const where = await this.buildWhereClause(user, filters);
+    const tickets = await this.prisma.ticket.findMany({
+      where,
+      orderBy: { created_at: 'desc' },
+      include: {
+        user: { select: { name: true, email: true } },
+        department: { select: { name: true } },
+        category: { select: { name: true } },
+        subcategory: { select: { name: true } },
+        assignee: { select: { name: true, email: true } },
+      },
+    });
+
+    return filterTicketsByPerformance(tickets, filters.performanceStatus);
+  }
+
+  private async buildWhereClause(
+    user: any,
+    filters: ReportFiltersDto,
+  ): Promise<Prisma.TicketWhereInput> {
+    const conditions: Prisma.TicketWhereInput[] = [];
+
     const isSuperAdmin = this.isSuperAdminUser(user);
-    const baseWhere = this.buildWhereClause(user, filters);
 
-    const now = new Date();
-    const slaBreachedCondition: Prisma.TicketWhereInput = {
-      due_at: { lt: now },
-      NOT: { status: { in: [TicketStatus.resolved, TicketStatus.closed] } },
-    };
-
-    if (isSuperAdmin) {
-      const [
-        total,
-        open,
-        wip,
-        resolved,
-        closed,
-        slaBreached,
-      ] = await Promise.all([
-        // System-wide overall counts ONLY for super_admin
-        this.prisma.ticket.count({ where: baseWhere }),
-        this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.open }] } }),
-        this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.wip }] } }),
-        this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.resolved }] } }),
-        this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.closed }] } }),
-        this.prisma.ticket.count({ where: { AND: [baseWhere, slaBreachedCondition] } }),
-      ]);
-
-      return {
-        totalTickets: total,
-        openTickets: open,
-        wipTickets: wip,
-        resolvedTickets: resolved,
-        closedTickets: closed,
-        slaBreachedTickets: slaBreached,
-      };
+    // Role-based visibility scoping
+    if (user && !isSuperAdmin) {
+      const managedUserIds = await this.getManagedUserIds(user);
+      conditions.push({
+        OR: [
+          { user_id: { in: managedUserIds } },
+          { assigned_to: { in: managedUserIds } },
+          ...(user.role === Role.hod && user.department_id
+            ? [{ department_id: user.department_id }]
+            : []),
+        ],
+      });
     }
 
-    // For ALL non-super_admin roles (hod, manager, user, admin)
-    const managedUserIds = await this.getManagedUserIds(user);
+    const searchTerm = filters.search?.trim();
+    if (searchTerm) {
+      conditions.push({
+        OR: [
+          { ticket_no: { contains: searchTerm, mode: 'insensitive' } },
+          { subject: { contains: searchTerm, mode: 'insensitive' } },
+          { description: { contains: searchTerm, mode: 'insensitive' } },
+          { user: { name: { contains: searchTerm, mode: 'insensitive' } } },
+          { user: { email: { contains: searchTerm, mode: 'insensitive' } } },
+        ],
+      });
+    }
 
-    const raisedByMeBase: Prisma.TicketWhereInput = {
-      AND: [baseWhere, { user_id: { in: managedUserIds } }],
-    };
+    if (filters.status) conditions.push({ status: filters.status });
+    if (filters.priority) conditions.push({ priority: filters.priority });
+    if (filters.department_id) conditions.push({ department_id: filters.department_id });
+    if (filters.category_id) conditions.push({ category_id: filters.category_id });
+    if (filters.subcategory_id) conditions.push({ subcategory_id: filters.subcategory_id });
+    if (filters.assigned_to) conditions.push({ assigned_to: filters.assigned_to });
 
-    const raisedOnMeBase: Prisma.TicketWhereInput = {
-      AND: [
-        baseWhere,
-        {
-          OR: [
-            { assigned_to: { in: managedUserIds } },
-            ...(user.role === Role.hod && user.department_id
-              ? [{ department_id: user.department_id }]
-              : []),
-          ],
+    if (filters.startDate || filters.endDate) {
+      conditions.push({
+        created_at: {
+          ...(filters.startDate && { gte: new Date(filters.startDate) }),
+          ...(filters.endDate && { lte: new Date(filters.endDate) }),
         },
-      ],
-    };
+      });
+    }
 
-    const [
-      myRaisedTotal,
-      myRaisedOpen,
-      myRaisedWip,
-      myRaisedResolved,
-      myRaisedClosed,
-      myRaisedSlaBreached,
-      myAssignedTotal,
-      myAssignedOpen,
-      myAssignedWip,
-      myAssignedResolved,
-      myAssignedClosed,
-      myAssignedSlaBreached,
-    ] = await Promise.all([
-      // Raised by me & my team counts
-      this.prisma.ticket.count({ where: raisedByMeBase }),
-      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, { status: TicketStatus.open }] } }),
-      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, { status: TicketStatus.wip }] } }),
-      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, { status: TicketStatus.resolved }] } }),
-      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, { status: TicketStatus.closed }] } }),
-      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, slaBreachedCondition] } }),
+    if (filters.slaBreached === 'true') {
+      conditions.push({
+        due_at: { lt: new Date() },
+        NOT: { status: { in: [TicketStatus.resolved, TicketStatus.closed] } },
+      });
+    }
 
-      // Raised on me & my team counts
-      this.prisma.ticket.count({ where: raisedOnMeBase }),
-      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, { status: TicketStatus.open }] } }),
-      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, { status: TicketStatus.wip }] } }),
-      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, { status: TicketStatus.resolved }] } }),
-      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, { status: TicketStatus.closed }] } }),
-      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, slaBreachedCondition] } }),
-    ]);
+    if (conditions.length === 0) return {};
+    if (conditions.length === 1) return conditions[0];
+    return { AND: conditions };
+  }
 
-    return {
-      ticketsRaisedByMe: {
-        total: myRaisedTotal,
-        byStatus: {
-          open: myRaisedOpen,
-          wip: myRaisedWip,
-          resolved: myRaisedResolved,
-          closed: myRaisedClosed,
-        },
-        slaBreached: myRaisedSlaBreached,
-      },
-      ticketsRaisedOnMe: {
-        total: myAssignedTotal,
-        byStatus: {
-          open: myAssignedOpen,
-          wip: myAssignedWip,
-          resolved: myAssignedResolved,
-          closed: myAssignedClosed,
-        },
-        slaBreached: myAssignedSlaBreached,
-      },
-    };
+  private isSuperAdminUser(user: any): boolean {
+    if (!user || !user.role) return false;
+    const roleStr = String(user.role).toLowerCase().trim();
+    return (
+      roleStr === 'super_admin' ||
+      roleStr === 'superadmin' ||
+      user.role === (Role as any).super_admin
+    );
   }
 
   private async getManagedUserIds(user: any): Promise<number[]> {
@@ -185,6 +218,116 @@ export class ReportsService {
     return [user.id];
   }
 
+  async getSummaryMetrics(user: any, filters: ReportFiltersDto) {
+    const isSuperAdmin = this.isSuperAdminUser(user);
+    const baseWhere = await this.buildWhereClause(user, filters);
+
+    const now = new Date();
+    const slaBreachedCondition: Prisma.TicketWhereInput = {
+      due_at: { lt: now },
+      NOT: { status: { in: [TicketStatus.resolved, TicketStatus.closed] } },
+    };
+
+    if (isSuperAdmin) {
+      const [
+        total,
+        open,
+        wip,
+        resolved,
+        closed,
+        slaBreached,
+      ] = await Promise.all([
+        this.prisma.ticket.count({ where: baseWhere }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.open }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.wip }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.resolved }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.closed }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, slaBreachedCondition] } }),
+      ]);
+
+      return {
+        totalTickets: total,
+        openTickets: open,
+        wipTickets: wip,
+        resolvedTickets: resolved,
+        closedTickets: closed,
+        slaBreachedTickets: slaBreached,
+      };
+    }
+
+    const managedUserIds = await this.getManagedUserIds(user);
+
+    const raisedByMeBase: Prisma.TicketWhereInput = {
+      AND: [baseWhere, { user_id: { in: managedUserIds } }],
+    };
+
+    const raisedOnMeBase: Prisma.TicketWhereInput = {
+      AND: [
+        baseWhere,
+        {
+          OR: [
+            { assigned_to: { in: managedUserIds } },
+            ...(user.role === Role.hod && user.department_id
+              ? [{ department_id: user.department_id }]
+              : []),
+          ],
+        },
+      ],
+    };
+
+    const [
+      myRaisedTotal,
+      myRaisedOpen,
+      myRaisedWip,
+      myRaisedResolved,
+      myRaisedClosed,
+      myRaisedSlaBreached,
+      myAssignedTotal,
+      myAssignedOpen,
+      myAssignedWip,
+      myAssignedResolved,
+      myAssignedClosed,
+      myAssignedSlaBreached,
+    ] = await Promise.all([
+      this.prisma.ticket.count({ where: raisedByMeBase }),
+      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, { status: TicketStatus.open }] } }),
+      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, { status: TicketStatus.wip }] } }),
+      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, { status: TicketStatus.resolved }] } }),
+      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, { status: TicketStatus.closed }] } }),
+      this.prisma.ticket.count({ where: { AND: [raisedByMeBase, slaBreachedCondition] } }),
+
+      this.prisma.ticket.count({ where: raisedOnMeBase }),
+      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, { status: TicketStatus.open }] } }),
+      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, { status: TicketStatus.wip }] } }),
+      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, { status: TicketStatus.resolved }] } }),
+      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, { status: TicketStatus.closed }] } }),
+      this.prisma.ticket.count({ where: { AND: [raisedOnMeBase, slaBreachedCondition] } }),
+    ]);
+
+    return {
+      ticketsRaisedByMe: {
+        total: myRaisedTotal,
+        byStatus: {
+          open: myRaisedOpen,
+          wip: myRaisedWip,
+          resolved: myRaisedResolved,
+          closed: myRaisedClosed,
+        },
+        slaBreached: myRaisedSlaBreached,
+      },
+      ticketsRaisedOnMe: {
+        total: myAssignedTotal,
+        byStatus: {
+          open: myAssignedOpen,
+          wip: myAssignedWip,
+          resolved: myAssignedResolved,
+          closed: myAssignedClosed,
+        },
+        slaBreached: myAssignedSlaBreached,
+      },
+    };
+  }
+
   async exportExcel(user: any, filters: ReportFiltersDto, res: Response) {
     const tickets = await this.getFilteredTickets(user, filters);
     return ExcelExporter.exportTicketsToExcel(tickets, res);
@@ -193,74 +336,5 @@ export class ReportsService {
   async exportCsv(user: any, filters: ReportFiltersDto, res: Response) {
     const tickets = await this.getFilteredTickets(user, filters);
     return CsvExporter.exportTicketsToCsv(tickets, res);
-  }
-
-  private async getFilteredTickets(user: any, filters: ReportFiltersDto) {
-    const where = this.buildWhereClause(user, filters);
-    return this.prisma.ticket.findMany({
-      where,
-      orderBy: { created_at: 'desc' },
-      include: {
-        user: { select: { name: true, email: true } },
-        department: { select: { name: true } },
-        category: { select: { name: true } },
-        subcategory: { select: { name: true } },
-        assignee: { select: { name: true, email: true } },
-      },
-    });
-  }
-
-  private buildWhereClause(
-    user: any,
-    filters: ReportFiltersDto,
-  ): Prisma.TicketWhereInput {
-    const conditions: Prisma.TicketWhereInput[] = [];
-
-    const isSuperAdmin = this.isSuperAdminUser(user);
-
-    // Role-based visibility scoping
-    if (user && !isSuperAdmin) {
-      if ((user.role === Role.manager || user.role === Role.hod) && user.department_id) {
-        conditions.push({
-          OR: [
-            { department_id: user.department_id },
-            { user_id: user.id },
-            { assigned_to: user.id },
-          ],
-        });
-      } else {
-        // admin and user role scoped to raised by or assigned to user
-        conditions.push({
-          OR: [{ user_id: user.id }, { assigned_to: user.id }],
-        });
-      }
-    }
-
-    if (filters.startDate || filters.endDate) {
-      conditions.push({
-        created_at: {
-          ...(filters.startDate && { gte: new Date(filters.startDate) }),
-          ...(filters.endDate && { lte: new Date(filters.endDate) }),
-        },
-      });
-    }
-
-    if (filters.status) conditions.push({ status: filters.status });
-    if (filters.priority) conditions.push({ priority: filters.priority });
-    if (filters.department_id) conditions.push({ department_id: filters.department_id });
-
-    if (conditions.length === 0) return {};
-    if (conditions.length === 1) return conditions[0];
-    return { AND: conditions };
-  }
-
-  private isSuperAdminUser(user: any): boolean {
-    if (!user || !user.role) return false;
-    const roleStr = String(user.role).toLowerCase().trim();
-    return (
-      roleStr === 'super_admin' ||
-      roleStr === 'superadmin' ||
-      user.role === (Role as any).super_admin
-    );
   }
 }

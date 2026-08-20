@@ -136,7 +136,7 @@ export class TicketsController {
 
   @Patch(':id/due-date')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.admin, Role.manager, Role.hod)
+  @Roles(Role.admin, Role.manager, Role.hod, Role.user, (Role as any).super_admin || 'super_admin')
   @ApiOperation({ summary: 'Update SLA due date of a ticket' })
   @ApiParam({ name: 'id', type: Number, description: 'Ticket ID' })
   @ApiResponse({ status: 200, description: 'SLA due date updated successfully' })

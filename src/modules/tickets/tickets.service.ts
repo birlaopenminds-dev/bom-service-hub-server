@@ -18,6 +18,7 @@ import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { UpdateTicketStatusDto } from './dto/update-status.dto';
 import { UpdateDueDateDto } from './dto/update-due-date.dto';
 import { ReassignTicketDto } from './dto/reassign-ticket.dto';
+import { filterTicketsByPerformance } from '../reports/reports.service';
 import { EscalateTicketDto } from './dto/escalate-ticket.dto';
 import { AddCommentDto } from './dto/add-comment.dto';
 import { ListTicketsDto } from './dto/list-tickets.dto';
@@ -291,13 +292,30 @@ export class TicketsService {
 
     const where: Prisma.TicketWhereInput = filters.length > 0 ? { AND: filters } : {};
 
-    // Get total count of matching records for this filter set
-    const totalCount = await this.prisma.ticket.count({ where });
+    if (query.performanceStatus && query.performanceStatus.toUpperCase() !== 'ALL') {
+      const allMatching = await this.prisma.ticket.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        include: this.getTicketIncludeRelations(),
+      });
 
-    // Calculate max pages for this filtered result
+      const filtered = filterTicketsByPerformance(allMatching, query.performanceStatus);
+      const totalCount = filtered.length;
+      const maxPages = Math.ceil(totalCount / limit) || 1;
+
+      if (searchTerm || page > maxPages) {
+        page = 1;
+      }
+
+      const skip = (page - 1) * limit;
+      const paginatedTickets = filtered.slice(skip, skip + limit);
+      return PaginationUtil.buildPaginatedResult(paginatedTickets, totalCount, page, limit);
+    }
+
+    // Standard paginated query
+    const totalCount = await this.prisma.ticket.count({ where });
     const maxPages = Math.ceil(totalCount / limit) || 1;
 
-    // Graceful fallback: If search is active or current page > maxPages (e.g. user was on Page 2 when searching), reset to Page 1
     if (searchTerm || page > maxPages) {
       page = 1;
     }

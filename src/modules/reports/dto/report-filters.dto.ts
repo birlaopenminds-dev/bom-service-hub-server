@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsInt, IsOptional } from 'class-validator';
+import { IsDateString, IsEnum, IsInt, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Priority, TicketStatus } from '@prisma/client';
 
@@ -29,4 +29,37 @@ export class ReportFiltersDto {
   @IsInt()
   @Type(() => Number)
   department_id?: number;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  category_id?: number;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  subcategory_id?: number;
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  assigned_to?: number;
+
+  @ApiPropertyOptional({ example: 'search string' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({ example: 'true' })
+  @IsOptional()
+  @IsString()
+  slaBreached?: string;
+
+  @ApiPropertyOptional({ example: 'OPEN_DELAYED', description: 'Filter by Performance & SLA Status' })
+  @IsOptional()
+  @IsString()
+  performanceStatus?: string;
 }

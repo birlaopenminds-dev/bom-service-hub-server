@@ -67,4 +67,9 @@ export class ListTicketsDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @ApiPropertyOptional({ example: 'OPEN_DELAYED', description: 'Filter by Performance & SLA Status' })
+  @IsOptional()
+  @IsString()
+  performanceStatus?: string;
 }

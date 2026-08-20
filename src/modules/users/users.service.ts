@@ -467,6 +467,15 @@ export class UsersService {
       password_changed: true,
       created_at: true,
       department: { select: { id: true, name: true } },
+      assigned_subcategories: {
+        select: {
+          id: true,
+          name: true,
+          tat_hours: true,
+          is_active: true,
+          category: { select: { id: true, name: true } },
+        },
+      },
     };
   }
 }
