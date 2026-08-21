@@ -241,17 +241,44 @@ export class TicketsService {
       String(user.role).toLowerCase() === 'super_admin' ||
       user.role === Role.super_admin;
 
-    if (!isSuperAdmin) {
+    const filterType = (query.type || query.scope)?.trim().toLowerCase();
+
+    if (isSuperAdmin) {
+      if (filterType === 'raised_by_me' || filterType === 'created_by_me') {
+        filters.push({ user_id: user.id });
+      } else if (filterType === 'raised_on_me' || filterType === 'assigned_to_me') {
+        filters.push({ assigned_to: user.id });
+      }
+    } else {
       const managedUserIds = await this.getManagedUserIds(user);
-      filters.push({
-        OR: [
-          { user_id: { in: managedUserIds } },
-          { assigned_to: { in: managedUserIds } },
-          ...(user.role === Role.hod && user.department_id
-            ? [{ department_id: user.department_id }]
-            : []),
-        ],
-      });
+
+      if (filterType === 'raised_by_me' || filterType === 'created_by_me') {
+        filters.push({ user_id: { in: managedUserIds } });
+      } else if (filterType === 'raised_on_me' || filterType === 'assigned_to_me') {
+        filters.push({
+          AND: [
+            {
+              OR: [
+                { assigned_to: { in: managedUserIds } },
+                ...(user.role === Role.hod && user.department_id
+                  ? [{ department_id: user.department_id }]
+                  : []),
+              ],
+            },
+            { NOT: { user_id: { in: managedUserIds } } },
+          ],
+        });
+      } else {
+        filters.push({
+          OR: [
+            { user_id: { in: managedUserIds } },
+            { assigned_to: { in: managedUserIds } },
+            ...(user.role === Role.hod && user.department_id
+              ? [{ department_id: user.department_id }]
+              : []),
+          ],
+        });
+      }
     }
 
     const searchTerm = query.search?.trim();
@@ -269,7 +296,17 @@ export class TicketsService {
       });
     }
 
-    if (query.status) filters.push({ status: query.status });
+    if (query.status) {
+      const statusList = String(query.status)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (statusList.length === 1) {
+        filters.push({ status: statusList[0] as TicketStatus });
+      } else if (statusList.length > 1) {
+        filters.push({ status: { in: statusList as TicketStatus[] } });
+      }
+    }
     if (query.priority) filters.push({ priority: query.priority });
     if (query.department_id) filters.push({ department_id: query.department_id });
     if (query.category_id) filters.push({ category_id: query.category_id });

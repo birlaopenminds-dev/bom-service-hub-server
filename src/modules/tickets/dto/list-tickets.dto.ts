@@ -19,10 +19,10 @@ export class ListTicketsDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ enum: TicketStatus })
+  @ApiPropertyOptional({ description: 'Filter status (e.g. open, wip, resolved, closed, or comma separated like resolved,closed)' })
   @IsOptional()
-  @IsEnum(TicketStatus)
-  status?: TicketStatus;
+  @IsString()
+  status?: string;
 
   @ApiPropertyOptional({ enum: Priority })
   @IsOptional()
@@ -72,4 +72,14 @@ export class ListTicketsDto {
   @IsOptional()
   @IsString()
   performanceStatus?: string;
+
+  @ApiPropertyOptional({ example: 'raised_by_me', description: 'Filter type: raised_by_me or raised_on_me' })
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @ApiPropertyOptional({ example: 'raised_by_me', description: 'Filter scope: raised_by_me or raised_on_me' })
+  @IsOptional()
+  @IsString()
+  scope?: string;
 }

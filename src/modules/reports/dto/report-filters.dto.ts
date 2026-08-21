@@ -14,10 +14,10 @@ export class ReportFiltersDto {
   @IsDateString()
   endDate?: string;
 
-  @ApiPropertyOptional({ enum: TicketStatus })
+  @ApiPropertyOptional({ description: 'Filter status (e.g. open, wip, resolved, closed, or comma separated like resolved,closed)' })
   @IsOptional()
-  @IsEnum(TicketStatus)
-  status?: TicketStatus;
+  @IsString()
+  status?: string;
 
   @ApiPropertyOptional({ enum: Priority })
   @IsOptional()

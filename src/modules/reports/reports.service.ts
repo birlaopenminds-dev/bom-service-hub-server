@@ -121,7 +121,17 @@ export class ReportsService {
       });
     }
 
-    if (filters.status) conditions.push({ status: filters.status });
+    if (filters.status) {
+      const statusList = String(filters.status)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (statusList.length === 1) {
+        conditions.push({ status: statusList[0] as TicketStatus });
+      } else if (statusList.length > 1) {
+        conditions.push({ status: { in: statusList as TicketStatus[] } });
+      }
+    }
     if (filters.priority) conditions.push({ priority: filters.priority });
     if (filters.department_id) conditions.push({ department_id: filters.department_id });
     if (filters.category_id) conditions.push({ category_id: filters.category_id });
@@ -281,6 +291,7 @@ export class ReportsService {
               : []),
           ],
         },
+        { NOT: { user_id: { in: managedUserIds } } },
       ],
     };
 
