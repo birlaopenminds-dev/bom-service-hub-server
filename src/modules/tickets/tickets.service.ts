@@ -263,6 +263,8 @@ export class TicketsService {
           { description: { contains: searchTerm, mode: 'insensitive' } },
           { user: { name: { contains: searchTerm, mode: 'insensitive' } } },
           { user: { email: { contains: searchTerm, mode: 'insensitive' } } },
+          { assignee: { name: { contains: searchTerm, mode: 'insensitive' } } },
+          { assignee: { email: { contains: searchTerm, mode: 'insensitive' } } },
         ],
       });
     }
@@ -272,7 +274,14 @@ export class TicketsService {
     if (query.department_id) filters.push({ department_id: query.department_id });
     if (query.category_id) filters.push({ category_id: query.category_id });
     if (query.subcategory_id) filters.push({ subcategory_id: query.subcategory_id });
-    if (query.assigned_to) filters.push({ assigned_to: query.assigned_to });
+    if (query.assigned_to) {
+      filters.push({
+        OR: [
+          { assigned_to: query.assigned_to },
+          { user_id: query.assigned_to },
+        ],
+      });
+    }
 
     if (query.startDate || query.endDate) {
       filters.push({

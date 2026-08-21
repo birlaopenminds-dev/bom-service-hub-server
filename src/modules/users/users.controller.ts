@@ -95,13 +95,14 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Dropdown users list retrieved successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized token or session revoked' })
   async getDropdown(
+    @GetUser() currentUser: IUserPayload,
     @Query('department_id') department_id?: string,
     @Query('role') role?: Role,
     @Query('is_active') is_active?: string,
   ) {
     const deptId = department_id ? Number(department_id) : undefined;
     const active = is_active !== undefined ? String(is_active).toLowerCase() === 'true' : true;
-    return this.usersService.getDropdown(deptId, role, active);
+    return this.usersService.getDropdown(currentUser, deptId, role, active);
   }
 
   // Get User by ID (Admin, Manager/HOD of user, or Self)

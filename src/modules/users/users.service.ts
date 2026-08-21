@@ -224,17 +224,69 @@ export class UsersService {
     return PaginationUtil.buildPaginatedResult(users, total, page, limit);
   }
 
-  async getDropdown(departmentId?: number, role?: Role, isActive = true) {
-    const where: Prisma.UserWhereInput = {};
-    if (departmentId) {
-      where.department_id = departmentId;
-    }
-    if (role) {
-      where.role = role;
-    }
+  async getDropdown(
+    currentUser?: IUserPayload,
+    departmentId?: number,
+    role?: Role,
+    isActive = true,
+  ) {
+    const filters: Prisma.UserWhereInput[] = [];
+
     if (isActive !== undefined) {
-      where.is_active = isActive;
+      filters.push({ is_active: isActive });
     }
+
+    if (role) {
+      filters.push({ role });
+    } else {
+      filters.push({
+        role: {
+          notIn: [Role.admin, Role.super_admin],
+        },
+      });
+    }
+
+    if (departmentId) {
+      filters.push({ department_id: departmentId });
+    }
+
+    if (currentUser && !this.isAdminOrSuperAdmin(currentUser.role)) {
+      const roleStr = String(currentUser.role).toLowerCase().trim();
+
+      if (roleStr === 'hod') {
+        const hodConditions: Prisma.UserWhereInput[] = [
+          { id: currentUser.id },
+          { hod_id: currentUser.id },
+          { reporting_manager_id: currentUser.id },
+        ];
+        if (currentUser.department_id) {
+          hodConditions.push({ department_id: currentUser.department_id });
+        }
+        filters.push({ OR: hodConditions });
+      } else if (roleStr === 'manager') {
+        // RM (Reporting Manager)
+        const rmConditions: Prisma.UserWhereInput[] = [
+          { id: currentUser.id },
+          { reporting_manager_id: currentUser.id },
+          { hod_id: currentUser.id },
+        ];
+        if (currentUser.department_id) {
+          rmConditions.push({ department_id: currentUser.department_id });
+        }
+        filters.push({ OR: rmConditions });
+      } else {
+        const userConditions: Prisma.UserWhereInput[] = [
+          { id: currentUser.id },
+        ];
+        if (currentUser.department_id) {
+          userConditions.push({ department_id: currentUser.department_id });
+        }
+        filters.push({ OR: userConditions });
+      }
+    }
+
+    const where: Prisma.UserWhereInput =
+      filters.length > 0 ? { AND: filters } : {};
 
     const users = await this.prisma.user.findMany({
       where,

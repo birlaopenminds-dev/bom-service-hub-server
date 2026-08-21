@@ -115,6 +115,8 @@ export class ReportsService {
           { description: { contains: searchTerm, mode: 'insensitive' } },
           { user: { name: { contains: searchTerm, mode: 'insensitive' } } },
           { user: { email: { contains: searchTerm, mode: 'insensitive' } } },
+          { assignee: { name: { contains: searchTerm, mode: 'insensitive' } } },
+          { assignee: { email: { contains: searchTerm, mode: 'insensitive' } } },
         ],
       });
     }
@@ -124,7 +126,14 @@ export class ReportsService {
     if (filters.department_id) conditions.push({ department_id: filters.department_id });
     if (filters.category_id) conditions.push({ category_id: filters.category_id });
     if (filters.subcategory_id) conditions.push({ subcategory_id: filters.subcategory_id });
-    if (filters.assigned_to) conditions.push({ assigned_to: filters.assigned_to });
+    if (filters.assigned_to) {
+      conditions.push({
+        OR: [
+          { assigned_to: filters.assigned_to },
+          { user_id: filters.assigned_to },
+        ],
+      });
+    }
 
     if (filters.startDate || filters.endDate) {
       conditions.push({
