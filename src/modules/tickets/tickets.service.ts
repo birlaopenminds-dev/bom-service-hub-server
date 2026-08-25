@@ -430,6 +430,15 @@ export class TicketsService {
   ) {
     const ticket = await this.findOne(id);
 
+    if (
+      ticket.status === TicketStatus.resolved ||
+      ticket.status === TicketStatus.closed
+    ) {
+      throw new BadRequestException(
+        'Ticket is resolved or closed and its status cannot be changed.',
+      );
+    }
+
     const isResolvedOrClosed =
       dto.status === TicketStatus.resolved || dto.status === TicketStatus.closed;
 
@@ -484,6 +493,15 @@ export class TicketsService {
   ) {
     const ticket = await this.findOne(id);
 
+    if (
+      ticket.status === TicketStatus.resolved ||
+      ticket.status === TicketStatus.closed
+    ) {
+      throw new BadRequestException(
+        'Ticket is resolved or closed and cannot be reassigned.',
+      );
+    }
+
     const newAssignee = await this.prisma.user.findUnique({
       where: { id: dto.assigned_to },
     });
@@ -532,6 +550,15 @@ export class TicketsService {
 
   async updateDueDate(id: number, dto: UpdateDueDateDto, userId: number) {
     const ticket = await this.findOne(id);
+
+    if (
+      ticket.status === TicketStatus.resolved ||
+      ticket.status === TicketStatus.closed
+    ) {
+      throw new BadRequestException(
+        'Ticket is resolved or closed and SLA due date cannot be updated.',
+      );
+    }
     const newDueDate = new Date(dto.due_at);
 
     if (isNaN(newDueDate.getTime())) {
@@ -581,6 +608,15 @@ export class TicketsService {
 
   async escalateTicket(id: number, dto: EscalateTicketDto, userId: number) {
     const ticket = await this.findOne(id);
+
+    if (
+      ticket.status === TicketStatus.resolved ||
+      ticket.status === TicketStatus.closed
+    ) {
+      throw new BadRequestException(
+        'Ticket is resolved or closed and cannot be escalated.',
+      );
+    }
 
     const updated = await this.prisma.ticket.update({
       where: { id },
@@ -635,23 +671,23 @@ export class TicketsService {
       const recipientName =
         user.id === ticket.user_id ? ticket.assignee?.name || 'Assignee' : ticket.user.name;
 
-      await this.mailService.sendMail({
-        to: notifyRecipient,
-        subject: `New Comment on Ticket: ${ticket.ticket_no}`,
-        template: 'ticket-comment',
-        context: {
-          name: recipientName,
-          ticketNo: ticket.ticket_no,
-          author: user.name,
-          comment: sanitizedComment,
-          subject: ticket.subject,
-          description: ticket.description,
-          creatorName: ticket.user.name,
-          creatorEmail: ticket.user.email,
-          assigneeName: ticket.assignee?.name || null,
-          assigneeEmail: ticket.assignee?.email || null,
-        },
-      });
+      // await this.mailService.sendMail({
+      //   to: notifyRecipient,
+      //   subject: `New Comment on Ticket: ${ticket.ticket_no}`,
+      //   template: 'ticket-comment',
+      //   context: {
+      //     name: recipientName,
+      //     ticketNo: ticket.ticket_no,
+      //     author: user.name,
+      //     comment: sanitizedComment,
+      //     subject: ticket.subject,
+      //     description: ticket.description,
+      //     creatorName: ticket.user.name,
+      //     creatorEmail: ticket.user.email,
+      //     assigneeName: ticket.assignee?.name || null,
+      //     assigneeEmail: ticket.assignee?.email || null,
+      //   },
+      // });
     }
 
     return log;
@@ -664,6 +700,15 @@ export class TicketsService {
     files?: Express.Multer.File[],
   ) {
     const ticket = await this.findOne(id);
+
+    if (
+      ticket.status === TicketStatus.resolved ||
+      ticket.status === TicketStatus.closed
+    ) {
+      throw new BadRequestException(
+        'Ticket is resolved or closed and cannot be edited.',
+      );
+    }
 
     const updated = await this.prisma.ticket.update({
       where: { id },
