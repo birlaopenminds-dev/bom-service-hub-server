@@ -559,6 +559,7 @@ export class TicketsService {
         'Ticket is resolved or closed and SLA due date cannot be updated.',
       );
     }
+
     const newDueDate = new Date(dto.due_at);
 
     if (isNaN(newDueDate.getTime())) {
@@ -709,6 +710,8 @@ export class TicketsService {
         'Ticket is resolved or closed and cannot be edited.',
       );
     }
+
+
 
     const updated = await this.prisma.ticket.update({
       where: { id },

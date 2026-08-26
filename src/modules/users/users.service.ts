@@ -16,8 +16,11 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ListUsersDto } from './dto/list-users.dto';
 import { ResetUserPasswordDto, AdminResetUserPasswordDto } from './dto/reset-password.dto';
+import * as ExcelJS from 'exceljs';
 import { Prisma, Role } from '@prisma/client';
 import { IUserPayload } from '../../common/interfaces/request.interface';
+import { Response } from 'express';
+import { UsersExporter } from './export/users.exporter';
 
 @Injectable()
 export class UsersService {
@@ -305,7 +308,6 @@ export class UsersService {
     return { data: users };
   }
 
-
   // Get user by ID (Super Admin/Admin, Manager/HOD, or Self)
   async findOne(id: number, currentUser?: IUserPayload) {
 
@@ -503,6 +505,242 @@ export class UsersService {
       is_active: newActiveState,
       user: updated,
     };
+  }
+
+  // Bulk import users from uploaded Excel file (.xlsx or .xls)
+  async importUsersFromExcel(
+    file: Express.Multer.File,
+    currentUser?: IUserPayload,
+  ) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('Please upload a valid Excel file (.xlsx or .xls).');
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    try {
+      await workbook.xlsx.load(file.buffer as any);
+    } catch (err: any) {
+      throw new BadRequestException(`Failed to parse Excel file: ${err.message}`);
+    }
+
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) {
+      throw new BadRequestException('Uploaded Excel file contains no worksheets.');
+    }
+
+    const createdUsers: any[] = [];
+    const errors: { row: number; email?: string; name?: string; reason: string }[] = [];
+    let totalRows = 0;
+    let successCount = 0;
+    let failureCount = 0;
+
+    const getCellValue = (row: ExcelJS.Row, colIndex: number): string => {
+      const cell = row.getCell(colIndex);
+      if (!cell || cell.value === null || cell.value === undefined) return '';
+      if (typeof cell.value === 'object') {
+        if ('text' in cell.value && cell.value.text) return String(cell.value.text).trim();
+        if ('result' in cell.value && cell.value.result) return String(cell.value.result).trim();
+        if ('richText' in cell.value && Array.isArray((cell.value as any).richText)) {
+          return (cell.value as any).richText.map((rt: any) => rt.text).join('').trim();
+        }
+      }
+      return String(cell.value).trim();
+    };
+
+    const rowCount = worksheet.rowCount;
+
+    for (let rowNum = 2; rowNum <= rowCount; rowNum++) {
+      const row = worksheet.getRow(rowNum);
+
+      const name = getCellValue(row, 1);
+      const email = getCellValue(row, 2).toLowerCase();
+      const password = getCellValue(row, 3);
+      const mobile = getCellValue(row, 4);
+      const roleStr = getCellValue(row, 5).toLowerCase();
+      const departmentName = getCellValue(row, 6);
+      const reportingManagerEmail = getCellValue(row, 7).toLowerCase();
+      const hodEmail = getCellValue(row, 8).toLowerCase();
+
+      // Skip empty row
+      if (!name && !email) {
+        continue;
+      }
+
+      totalRows++;
+
+      // Row Validation
+      if (!name) {
+        failureCount++;
+        errors.push({ row: rowNum, email, name, reason: 'Full Name is required.' });
+        continue;
+      }
+
+      if (!email || !ValidatorsUtil.isValidEmail(email)) {
+        failureCount++;
+        errors.push({ row: rowNum, email, name, reason: 'Valid Email Address is required.' });
+        continue;
+      }
+
+      // Check duplicate email in DB
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email },
+      });
+
+      if (existingUser) {
+        failureCount++;
+        errors.push({
+          row: rowNum,
+          email,
+          name,
+          reason: `User with email "${email}" already exists in the system.`,
+        });
+        continue;
+      }
+
+      // Role Mapping
+      let mappedRole: Role = Role.user;
+      if (roleStr === 'admin') mappedRole = Role.admin;
+      else if (roleStr === 'manager') mappedRole = Role.manager;
+      else if (roleStr === 'hod') mappedRole = Role.hod;
+      else if (roleStr === 'super_admin' || roleStr === 'super admin') {
+        mappedRole = (Role as any).super_admin || Role.admin;
+      } else {
+        mappedRole = Role.user;
+      }
+
+      // Password Hashing
+      const rawPassword = password || 'Welcome@123';
+      const password_hash = await EncryptionUtil.hashPassword(rawPassword);
+
+      // Lookup Department
+      let department_id: number | null = null;
+      if (departmentName) {
+        let dept = await this.prisma.department.findFirst({
+          where: { name: { equals: departmentName, mode: 'insensitive' } },
+        });
+
+        if (!dept) {
+          dept = await this.prisma.department.create({
+            data: { name: departmentName },
+          });
+        }
+        department_id = dept.id;
+      }
+
+      // Lookup Reporting Manager
+      let reporting_manager_id: number | null = null;
+      if (reportingManagerEmail) {
+        const mgr = await this.prisma.user.findUnique({
+          where: { email: reportingManagerEmail },
+        });
+        if (mgr) {
+          reporting_manager_id = mgr.id;
+        }
+      }
+
+      // Lookup HOD
+      let hod_id: number | null = null;
+      if (hodEmail) {
+        const hodUser = await this.prisma.user.findUnique({
+          where: { email: hodEmail },
+        });
+        if (hodUser) {
+          hod_id = hodUser.id;
+        }
+      }
+
+      try {
+        const createdUser = await this.prisma.user.create({
+          data: {
+            name,
+            email,
+            mobile: mobile || null,
+            password_hash,
+            role: mappedRole,
+            department_id,
+            reporting_manager_id,
+            hod_id,
+            is_active: true,
+          },
+          select: this.getUserSelectFields(),
+        });
+
+        successCount++;
+        createdUsers.push(createdUser);
+      } catch (err: any) {
+        failureCount++;
+        errors.push({
+          row: rowNum,
+          email,
+          name,
+          reason: `Database error creating user: ${err.message}`,
+        });
+      }
+    }
+
+    return {
+      statusCode: 200,
+      message: `User import processed: ${successCount} created, ${failureCount} failed out of ${totalRows} total rows.`,
+      summary: {
+        totalRows,
+        successCount,
+        failureCount,
+        createdUsers,
+        errors,
+      },
+    };
+  }
+
+  // Export users list to Excel spreadsheet stream download
+  async exportUsersToExcel(
+    query: ListUsersDto,
+    currentUser: IUserPayload,
+    res: Response,
+  ) {
+    const where: Prisma.UserWhereInput = {};
+
+    if (query?.search) {
+      const search = query.search.trim();
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { mobile: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query?.role) {
+      where.role = query.role;
+    }
+
+    if (query?.department_id) {
+      where.department_id = Number(query.department_id);
+    }
+
+    if (query?.is_active !== undefined && (query.is_active as any) !== 'ALL' && query.is_active !== null) {
+      where.is_active =
+        typeof query.is_active === 'boolean'
+          ? query.is_active
+          : String(query.is_active).toLowerCase() === 'true';
+    }
+
+    const users = await this.prisma.user.findMany({
+      where,
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        mobile: true,
+        role: true,
+        is_active: true,
+        created_at: true,
+        department: { select: { id: true, name: true } },
+        reporting_manager: { select: { id: true, name: true, email: true } },
+        hod: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    return UsersExporter.exportToExcel(users, res);
   }
 
   private getUserSelectFields() {

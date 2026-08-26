@@ -2,12 +2,16 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
+import * as ExcelJS from 'exceljs';
+import { Response } from 'express';
 import { PaginationUtil } from '../../common/utils/pagination.util';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { ListDepartmentsDto } from './dto/list-departments.dto';
 import { PrismaService } from '@providers/database/prisma.service';
+import { DepartmentsExporter } from './export/departments.exporter';
 
 @Injectable()
 export class DepartmentsService {
@@ -154,4 +158,119 @@ export class DepartmentsService {
       data: { is_active: false },
     });
   }
+
+  // Bulk import departments from uploaded Excel file (.xlsx or .xls)
+  async importDepartmentsFromExcel(file: Express.Multer.File) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('Please upload a valid Excel file (.xlsx or .xls).');
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    try {
+      await workbook.xlsx.load(file.buffer as any);
+    } catch (err: any) {
+      throw new BadRequestException(`Failed to parse Excel file: ${err.message}`);
+    }
+
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) {
+      throw new BadRequestException('Uploaded Excel file contains no worksheets.');
+    }
+
+    const createdDepartments: any[] = [];
+    const errors: { row: number; name?: string; reason: string }[] = [];
+    let totalRows = 0;
+    let successCount = 0;
+    let failureCount = 0;
+
+    const getCellValue = (row: ExcelJS.Row, colIndex: number): string => {
+      const cell = row.getCell(colIndex);
+      if (!cell || cell.value === null || cell.value === undefined) return '';
+      if (typeof cell.value === 'object') {
+        if ('text' in cell.value && cell.value.text) return String(cell.value.text).trim();
+        if ('result' in cell.value && cell.value.result) return String(cell.value.result).trim();
+        if ('richText' in cell.value && Array.isArray((cell.value as any).richText)) {
+          return (cell.value as any).richText.map((rt: any) => rt.text).join('').trim();
+        }
+      }
+      return String(cell.value).trim();
+    };
+
+    const rowCount = worksheet.rowCount;
+
+    for (let rowNum = 2; rowNum <= rowCount; rowNum++) {
+      const row = worksheet.getRow(rowNum);
+
+      const name = getCellValue(row, 1);
+      const statusStr = getCellValue(row, 2).toLowerCase();
+
+      // Skip empty row
+      if (!name) {
+        continue;
+      }
+
+      totalRows++;
+
+      // Check existing department by name (case-insensitive search)
+      const existing = await this.prisma.department.findFirst({
+        where: { name: { equals: name, mode: 'insensitive' } },
+      });
+
+      if (existing) {
+        failureCount++;
+        errors.push({
+          row: rowNum,
+          name,
+          reason: `Department "${name}" already exists in the system.`,
+        });
+        continue;
+      }
+
+      const isActive = statusStr ? statusStr === 'active' || statusStr === 'true' : true;
+
+      try {
+        const created = await this.prisma.department.create({
+          data: {
+            name,
+            is_active: isActive,
+          },
+        });
+        createdDepartments.push(created);
+        successCount++;
+      } catch (err: any) {
+        failureCount++;
+        errors.push({
+          row: rowNum,
+          name,
+          reason: err.message || 'Database error creating department.',
+        });
+      }
+    }
+
+    return {
+      message: `Excel import completed: ${successCount} department(s) created, ${failureCount} failed/skipped.`,
+      summary: {
+        totalRows,
+        successCount,
+        failureCount,
+        createdDepartments,
+        errors,
+      },
+    };
+  }
+
+  // Export departments to Excel spreadsheet download
+  async exportDepartmentsToExcel(res: Response) {
+    const departments = await this.prisma.department.findMany({
+      orderBy: { created_at: 'desc' },
+      include: {
+        _count: {
+          select: { users: true, categories: true, tickets: true },
+        },
+      },
+    });
+
+    return DepartmentsExporter.exportToExcel(departments, res);
+  }
 }
+

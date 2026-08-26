@@ -11,14 +11,23 @@ import {
   HttpStatus,
   HttpCode,
   ParseIntPipe,
+  UseInterceptors,
+  UploadedFile,
+  Res,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
   ApiBearerAuth,
   ApiResponse,
   ApiParam,
+  ApiProduces,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
+import { UsersTemplateExporter } from './export/users-template.exporter';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -56,6 +65,78 @@ export class UsersController {
     @GetUser() currentUser: IUserPayload,
   ) {
     return this.usersService.create(createUserDto, currentUser);
+  }
+
+  // Download sample Excel template for bulk user import
+  @Get('template/download')
+  @Roles(
+    Role.admin,
+    (Role as any).super_admin || 'super_admin',
+  )
+  @ApiProduces('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  @ApiOperation({
+    summary: 'Download sample Excel template for bulk user import (Super Admin & Admin)',
+    description:
+      'Generates and downloads a pre-formatted Excel template (.xlsx) with sample data for bulk user import.',
+  })
+  @ApiResponse({ status: 200, description: 'Template Excel file download stream' })
+  async downloadTemplate(@Res() res: Response) {
+    return UsersTemplateExporter.generateTemplate(res);
+  }
+
+  // Bulk import users from uploaded Excel file (.xlsx or .xls)
+  @Post('import-excel')
+  @UseInterceptors(FileInterceptor('file'))
+  @Roles(
+    Role.admin,
+    (Role as any).super_admin || 'super_admin',
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Bulk import users from uploaded Excel file (Super Admin & Admin)',
+    description:
+      'Parses an uploaded Excel file (.xlsx or .xls) and bulk creates user accounts in the database.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Excel file (.xlsx or .xls)',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Users imported successfully with summary report' })
+  @ApiResponse({ status: 400, description: 'Invalid Excel file or format error' })
+  async importExcel(
+    @UploadedFile() file: Express.Multer.File,
+    @GetUser() currentUser: IUserPayload,
+  ) {
+    return this.usersService.importUsersFromExcel(file, currentUser);
+  }
+
+  // Export users list to Excel spreadsheet file (.xlsx)
+  @Get('export-excel')
+  @Roles(
+    Role.admin,
+    (Role as any).super_admin || 'super_admin',
+  )
+  @ApiProduces('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  @ApiOperation({
+    summary: 'Export users list to Excel file (Super Admin & Admin)',
+    description:
+      'Generates and streams an Excel file (.xlsx) containing users matching the requested search/filters.',
+  })
+  @ApiResponse({ status: 200, description: 'Excel file stream of users list' })
+  async exportExcel(
+    @Query() query: ListUsersDto,
+    @GetUser() currentUser: IUserPayload,
+    @Res() res: Response,
+  ) {
+    return this.usersService.exportUsersToExcel(query, currentUser, res);
   }
 
 
