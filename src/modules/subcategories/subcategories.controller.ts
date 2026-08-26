@@ -9,12 +9,27 @@ import {
   Query,
   UseGuards,
   ParseIntPipe,
+  UseInterceptors,
+  UploadedFile,
+  Res,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiResponse,
+  ApiParam,
+  ApiProduces,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { SubcategoriesService } from './subcategories.service';
 import { CreateSubcategoryDto } from './dto/create-subcategory.dto';
 import { UpdateSubcategoryDto } from './dto/update-subcategory.dto';
 import { ListSubcategoriesDto } from './dto/list-subcategories.dto';
+import { SubcategoriesTemplateExporter } from './export/subcategories-template.exporter';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -27,8 +42,50 @@ import { Role } from '@prisma/client';
 export class SubcategoriesController {
   constructor(private readonly subcategoriesService: SubcategoriesService) { }
 
+  // Download sample Excel template for bulk subcategory import
+  @Get('template/download')
+  @Roles(Role.admin, (Role as any).super_admin || 'super_admin')
+  @ApiProduces('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  @ApiOperation({
+    summary: 'Download sample Excel template for bulk subcategory import (Super Admin & Admin)',
+    description:
+      'Generates and downloads a pre-formatted Excel template (.xlsx) with sample data for bulk subcategory import.',
+  })
+  @ApiResponse({ status: 200, description: 'Template Excel file download stream' })
+  async downloadTemplate(@Res() res: Response) {
+    return SubcategoriesTemplateExporter.generateTemplate(res);
+  }
+
+  // Bulk import subcategories from uploaded Excel file (.xlsx or .xls)
+  @Post('import-excel')
+  @UseInterceptors(FileInterceptor('file'))
+  @Roles(Role.admin, (Role as any).super_admin || 'super_admin')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Bulk import subcategories from uploaded Excel file (Super Admin & Admin)',
+    description:
+      'Parses an uploaded Excel file (.xlsx or .xls) and bulk creates subcategories in the database.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Excel file (.xlsx or .xls)',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Subcategories imported successfully with summary report' })
+  @ApiResponse({ status: 400, description: 'Invalid Excel file or format error' })
+  async importExcel(@UploadedFile() file: Express.Multer.File) {
+    return this.subcategoriesService.importSubcategoriesFromExcel(file);
+  }
+
   @Post()
-  @Roles(Role.admin, Role.manager, Role.hod)
+  @Roles(Role.admin, Role.manager, Role.hod, (Role as any).super_admin || 'super_admin')
   @ApiOperation({ summary: 'Create new subcategory with default assignee & TAT hours' })
   @ApiResponse({ status: 201, description: 'Subcategory created successfully' })
   @ApiResponse({ status: 400, description: 'Validation failed or category_id invalid' })

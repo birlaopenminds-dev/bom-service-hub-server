@@ -2,7 +2,9 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
+import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../../providers/database/prisma.service';
 import { PaginationUtil } from '../../common/utils/pagination.util';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -196,4 +198,141 @@ export class CategoriesService {
       data: { is_active: false },
     });
   }
+
+  // Bulk import categories from uploaded Excel file (.xlsx or .xls)
+  async importCategoriesFromExcel(file: Express.Multer.File) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('Please upload a valid Excel file (.xlsx or .xls).');
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    try {
+      await workbook.xlsx.load(file.buffer as any);
+    } catch (err: any) {
+      throw new BadRequestException(`Failed to parse Excel file: ${err.message}`);
+    }
+
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) {
+      throw new BadRequestException('Uploaded Excel file contains no worksheets.');
+    }
+
+    const createdCategories: any[] = [];
+    const errors: { row: number; name?: string; departmentName?: string; reason: string }[] = [];
+    let totalRows = 0;
+    let successCount = 0;
+    let failureCount = 0;
+
+    const getCellValue = (row: ExcelJS.Row, colIndex: number): string => {
+      const cell = row.getCell(colIndex);
+      if (!cell || cell.value === null || cell.value === undefined) return '';
+      if (typeof cell.value === 'object') {
+        if ('text' in cell.value && cell.value.text) return String(cell.value.text).trim();
+        if ('result' in cell.value && cell.value.result) return String(cell.value.result).trim();
+        if ('richText' in cell.value && Array.isArray((cell.value as any).richText)) {
+          return (cell.value as any).richText.map((rt: any) => rt.text).join('').trim();
+        }
+      }
+      return String(cell.value).trim();
+    };
+
+    const rowCount = worksheet.rowCount;
+
+    for (let rowNum = 2; rowNum <= rowCount; rowNum++) {
+      const row = worksheet.getRow(rowNum);
+
+      const name = getCellValue(row, 1);
+      const departmentName = getCellValue(row, 2);
+      const statusStr = getCellValue(row, 3).toLowerCase();
+
+      // Skip empty row
+      if (!name && !departmentName) {
+        continue;
+      }
+
+      totalRows++;
+
+      if (!name) {
+        failureCount++;
+        errors.push({ row: rowNum, name, departmentName, reason: 'Category Name is required.' });
+        continue;
+      }
+
+      if (!departmentName) {
+        failureCount++;
+        errors.push({ row: rowNum, name, departmentName, reason: 'Department Name is required.' });
+        continue;
+      }
+
+      // Look up Department by name (case-insensitive)
+      const department = await this.prisma.department.findFirst({
+        where: { name: { equals: departmentName, mode: 'insensitive' } },
+      });
+
+      if (!department) {
+        failureCount++;
+        errors.push({
+          row: rowNum,
+          name,
+          departmentName,
+          reason: `Department "${departmentName}" not found in system.`,
+        });
+        continue;
+      }
+
+      // Check existing category under this department (case-insensitive)
+      const existing = await this.prisma.category.findFirst({
+        where: {
+          department_id: department.id,
+          name: { equals: name, mode: 'insensitive' },
+        },
+      });
+
+      if (existing) {
+        failureCount++;
+        errors.push({
+          row: rowNum,
+          name,
+          departmentName,
+          reason: `Category "${name}" already exists in department "${department.name}".`,
+        });
+        continue;
+      }
+
+      const isActive = statusStr ? statusStr === 'active' || statusStr === 'true' : true;
+
+      try {
+        const created = await this.prisma.category.create({
+          data: {
+            department_id: department.id,
+            name,
+            is_active: isActive,
+          },
+          include: { department: { select: { id: true, name: true } } },
+        });
+        createdCategories.push(created);
+        successCount++;
+      } catch (err: any) {
+        failureCount++;
+        errors.push({
+          row: rowNum,
+          name,
+          departmentName,
+          reason: err.message || 'Database error creating category.',
+        });
+      }
+    }
+
+    return {
+      message: `Excel import completed: ${successCount} category(ies) created, ${failureCount} failed/skipped.`,
+      summary: {
+        totalRows,
+        successCount,
+        failureCount,
+        createdCategories,
+        errors,
+      },
+    };
+  }
 }
+

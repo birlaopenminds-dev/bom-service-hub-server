@@ -9,12 +9,27 @@ import {
   Query,
   UseGuards,
   ParseIntPipe,
+  UseInterceptors,
+  UploadedFile,
+  Res,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiResponse,
+  ApiParam,
+  ApiProduces,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { ListCategoriesDto } from './dto/list-categories.dto';
+import { CategoriesTemplateExporter } from './export/categories-template.exporter';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -27,9 +42,51 @@ import { Role } from '@prisma/client';
 export class CategoriesController {
   constructor(private readonly categoriesService: CategoriesService) { }
 
+  // Download sample Excel template for bulk category import
+  @Get('template/download')
+  @Roles(Role.admin, (Role as any).super_admin || 'super_admin')
+  @ApiProduces('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  @ApiOperation({
+    summary: 'Download sample Excel template for bulk category import (Super Admin & Admin)',
+    description:
+      'Generates and downloads a pre-formatted Excel template (.xlsx) with sample data for bulk category import.',
+  })
+  @ApiResponse({ status: 200, description: 'Template Excel file download stream' })
+  async downloadTemplate(@Res() res: Response) {
+    return CategoriesTemplateExporter.generateTemplate(res);
+  }
+
+  // Bulk import categories from uploaded Excel file (.xlsx or .xls)
+  @Post('import-excel')
+  @UseInterceptors(FileInterceptor('file'))
+  @Roles(Role.admin, (Role as any).super_admin || 'super_admin')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Bulk import categories from uploaded Excel file (Super Admin & Admin)',
+    description:
+      'Parses an uploaded Excel file (.xlsx or .xls) and bulk creates categories in the database.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Excel file (.xlsx or .xls)',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Categories imported successfully with summary report' })
+  @ApiResponse({ status: 400, description: 'Invalid Excel file or format error' })
+  async importExcel(@UploadedFile() file: Express.Multer.File) {
+    return this.categoriesService.importCategoriesFromExcel(file);
+  }
+
   // create category
   @Post()
-  @Roles(Role.admin, Role.manager, Role.hod)
+  @Roles(Role.admin, Role.manager, Role.hod, (Role as any).super_admin || 'super_admin')
   @ApiOperation({ summary: 'Create new category under department' })
   @ApiResponse({ status: 201, description: 'Category created successfully' })
   @ApiResponse({ status: 400, description: 'Validation failed or department_id invalid' })
