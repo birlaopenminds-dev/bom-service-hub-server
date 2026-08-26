@@ -670,6 +670,7 @@ export class TicketsService {
     return updated;
   }
 
+  // added comment and updated by yash
   async addComment(id: number, dto: AddCommentDto, user: any) {
     const ticket = await this.findOne(id, user);
 
