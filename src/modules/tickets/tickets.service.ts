@@ -566,6 +566,24 @@ export class TicketsService {
       throw new BadRequestException('Invalid due date string format.');
     }
 
+    if (newDueDate.getTime() === new Date(ticket.due_at).getTime()) {
+      return ticket;
+    }
+
+    // Check SLA due date update count (Maximum 2 updates allowed per ticket)
+    const updateCount = await this.prisma.ticketLog.count({
+      where: {
+        ticket_id: id,
+        action: { in: ['DUE_DATE_UPDATED', 'SLA_DUE_DATE_UPDATED'] },
+      },
+    });
+
+    if (updateCount >= 2) {
+      throw new BadRequestException(
+        'SLA Due Date for this ticket has already been updated 2 times (maximum limit reached).',
+      );
+    }
+
     const updated = await this.prisma.ticket.update({
       where: { id },
       data: { due_at: newDueDate },
@@ -655,6 +673,15 @@ export class TicketsService {
   async addComment(id: number, dto: AddCommentDto, user: any) {
     const ticket = await this.findOne(id, user);
 
+    if (
+      ticket.status === TicketStatus.resolved ||
+      ticket.status === TicketStatus.closed
+    ) {
+      throw new BadRequestException(
+        'Ticket is resolved or closed and locked. No further comments can be added.',
+      );
+    }
+
     const sanitizedComment = SanitizeUtil.sanitizeString(dto.comment);
 
     const log = await this.ticketLogsService.createLog({
@@ -711,18 +738,55 @@ export class TicketsService {
       );
     }
 
+    const updateData: any = {
+      ...(dto.department_id && { department_id: dto.department_id }),
+      ...(dto.category_id && { category_id: dto.category_id }),
+      ...(dto.subcategory_id && { subcategory_id: dto.subcategory_id }),
+      ...(dto.priority && { priority: dto.priority }),
+      ...(dto.subject && { subject: SanitizeUtil.sanitizeString(dto.subject) }),
+      ...(dto.description && { description: SanitizeUtil.sanitizeRichText(dto.description) }),
+      ...(dto.assigned_to !== undefined && { assigned_to: dto.assigned_to }),
+    };
 
+    let isDueDateChanged = false;
+    let newDueDateObj: Date | null = null;
+
+    if (dto.due_date) {
+      const newDueDate = new Date(dto.due_date);
+      if (!isNaN(newDueDate.getTime()) && newDueDate.getTime() !== new Date(ticket.due_at).getTime()) {
+        const updateCount = await this.prisma.ticketLog.count({
+          where: {
+            ticket_id: id,
+            action: { in: ['DUE_DATE_UPDATED', 'SLA_DUE_DATE_UPDATED'] },
+          },
+        });
+
+        if (updateCount >= 2) {
+          throw new BadRequestException(
+            'SLA Due Date for this ticket has already been updated 2 times (maximum limit reached). Further extensions are not allowed.',
+          );
+        }
+
+        updateData.due_at = newDueDate;
+        isDueDateChanged = true;
+        newDueDateObj = newDueDate;
+      }
+    }
+
+    if (dto.status) {
+      updateData.status = dto.status;
+      if (dto.status === TicketStatus.resolved || dto.status === TicketStatus.closed) {
+        if (!ticket.resolved_at) {
+          updateData.resolved_at = new Date();
+        }
+      } else {
+        updateData.resolved_at = null;
+      }
+    }
 
     const updated = await this.prisma.ticket.update({
       where: { id },
-      data: {
-        ...(dto.priority && { priority: dto.priority }),
-        ...(dto.subject && { subject: SanitizeUtil.sanitizeString(dto.subject) }),
-        ...(dto.description && { description: SanitizeUtil.sanitizeRichText(dto.description) }),
-        ...(dto.status && { status: dto.status }),
-        ...(dto.assigned_to !== undefined && { assigned_to: dto.assigned_to }),
-        ...(dto.due_date && { due_at: new Date(dto.due_date) }),
-      },
+      data: updateData,
       include: this.getTicketIncludeRelations(),
     });
 
@@ -730,6 +794,41 @@ export class TicketsService {
       for (const file of files) {
         await this.ticketAttachmentsService.createAttachment(ticket.id, file);
       }
+    }
+
+    // Log specific actions
+    if (dto.status && dto.status !== ticket.status) {
+      await this.ticketLogsService.createLog({
+        ticket_id: id,
+        user_id: userId,
+        action: 'STATUS_CHANGED',
+        details: {
+          old_status: ticket.status,
+          new_status: dto.status,
+        },
+      });
+    }
+
+    if (isDueDateChanged && newDueDateObj) {
+      await this.ticketLogsService.createLog({
+        ticket_id: id,
+        user_id: userId,
+        action: 'DUE_DATE_UPDATED',
+        details: {
+          old_due_at: ticket.due_at,
+          new_due_at: newDueDateObj,
+        },
+      });
+    }
+
+    if (dto.comment && dto.comment.trim()) {
+      const sanitizedComment = SanitizeUtil.sanitizeString(dto.comment);
+      await this.ticketLogsService.createLog({
+        ticket_id: id,
+        user_id: userId,
+        action: 'COMMENT_ADDED',
+        details: { comment: sanitizedComment },
+      });
     }
 
     await this.ticketLogsService.createLog({
