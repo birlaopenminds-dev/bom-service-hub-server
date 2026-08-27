@@ -142,7 +142,8 @@ export class UsersService {
       });
     }
 
-    // Send Welcome Email asynchronously in background (non-blocking for fast HTTP response)
+    // Send Welcome Email asynchronously in background (Disabled / Commented out)
+    /*
     this.mailService
       .sendMail({
         to: user.email,
@@ -157,6 +158,7 @@ export class UsersService {
       .catch((err) =>
         this.logger.error(`Failed to send welcome email: ${err.message}`),
       );
+    */
 
     return user;
   }
@@ -231,16 +233,17 @@ export class UsersService {
     currentUser?: IUserPayload,
     departmentId?: number,
     role?: Role,
-    isActive = true,
+    isActive?: boolean,
   ) {
     const filters: Prisma.UserWhereInput[] = [];
 
-    if (isActive !== undefined) {
-      filters.push({ is_active: isActive });
-    }
+    // Default to active users if isActive is not explicitly provided
+    const activeFilter = isActive !== undefined ? isActive : true;
+    filters.push({ is_active: activeFilter });
 
-    if (role) {
-      filters.push({ role });
+    if (role && (role as string) !== 'ALL') {
+      const normalizedRole = (role as string).toLowerCase().trim() as Role;
+      filters.push({ role: normalizedRole });
     } else {
       filters.push({
         role: {
@@ -249,7 +252,7 @@ export class UsersService {
       });
     }
 
-    if (departmentId) {
+    if (departmentId && !isNaN(departmentId)) {
       filters.push({ department_id: departmentId });
     }
 
@@ -466,8 +469,12 @@ export class UsersService {
     return { message: 'User deactivated successfully.', user: updated };
   }
 
-  // Toggle user active status (true <-> false)
-  async toggleStatus(id: number, currentUser: IUserPayload | number) {
+  // Toggle user active status (true <-> false) or set explicit status
+  async toggleStatus(
+    id: number,
+    currentUser: IUserPayload | number,
+    explicitIsActive?: boolean,
+  ) {
     let currentUserId: number;
     let targetUser;
 
@@ -483,7 +490,8 @@ export class UsersService {
       throw new BadRequestException('You cannot change your own active status.');
     }
 
-    const newActiveState = !targetUser.is_active;
+    const newActiveState =
+      explicitIsActive !== undefined ? Boolean(explicitIsActive) : !targetUser.is_active;
 
     const updated = await this.prisma.user.update({
       where: { id },

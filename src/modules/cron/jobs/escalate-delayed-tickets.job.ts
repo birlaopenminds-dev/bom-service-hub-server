@@ -46,7 +46,8 @@ export class EscalateDelayedTicketsJob {
         details: { due_at: ticket.due_at, escalated_at: now },
       });
 
-      // Send email alert to user and assignee
+      // Send email alert to user and assignee (Disabled / Commented out)
+      /*
       await this.mailService.sendMail({
         to: ticket.user.email,
         subject: `[SLA BREACH] Ticket Auto-Escalated: ${ticket.ticket_no}`,
@@ -63,6 +64,7 @@ export class EscalateDelayedTicketsJob {
           dueAt: ticket.due_at,
         },
       });
+      */
 
       count++;
     }

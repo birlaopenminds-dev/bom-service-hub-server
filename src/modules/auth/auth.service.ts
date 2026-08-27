@@ -253,7 +253,8 @@ export class AuthService {
       },
     );
 
-    // Send reset email
+    // Send reset email (Disabled / Commented out)
+    /*
     const isSent = await this.mailService.sendMail({
       to: user.email,
       subject: 'BOM ServiceHub - Reset Your Password',
@@ -271,8 +272,9 @@ export class AuthService {
         'Failed to send password reset email. Please verify SMTP mail configuration/App Password.',
       );
     }
+    */
 
-    return { message: 'Email sent for password reset.' };
+    return { message: 'Password reset request generated successfully.' };
   }
 
   async confirmPasswordReset(dto: ConfirmResetPasswordDto) {

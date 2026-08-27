@@ -28,6 +28,7 @@ export class SendRemindersJob {
     let count = 0;
     for (const ticket of ticketsNearingBreach) {
       if (ticket.assignee) {
+        /*
         await this.mailService.sendMail({
           to: ticket.assignee.email,
           subject: `[SLA WARNING] Ticket ${ticket.ticket_no} Due Soon`,
@@ -44,6 +45,7 @@ export class SendRemindersJob {
             dueAt: ticket.due_at,
           },
         });
+        */
         count++;
       }
     }

@@ -181,9 +181,19 @@ export class UsersController {
     @Query('role') role?: Role,
     @Query('is_active') is_active?: string,
   ) {
-    const deptId = department_id ? Number(department_id) : undefined;
-    const active = is_active !== undefined ? String(is_active).toLowerCase() === 'true' : true;
-    return this.usersService.getDropdown(currentUser, deptId, role, active);
+    const deptId =
+      department_id && department_id !== 'ALL' && !isNaN(Number(department_id))
+        ? Number(department_id)
+        : undefined;
+    const active =
+      is_active !== undefined && is_active !== 'ALL'
+        ? String(is_active).toLowerCase() === 'true'
+        : undefined;
+    const roleFilter =
+      role && (role as string) !== 'ALL'
+        ? ((role as string).toLowerCase().trim() as Role)
+        : undefined;
+    return this.usersService.getDropdown(currentUser, deptId, roleFilter, active);
   }
 
   // Get User by ID (Admin, Manager/HOD of user, or Self)
@@ -308,8 +318,8 @@ export class UsersController {
     return this.usersService.remove(id, currentUser);
   }
 
-  // Toggle user active status (Admin & Manager/HOD of employee)
-  @Patch(':id/toggle-status')
+  // Toggle or update user active status (Admin & Manager/HOD of employee)
+  @Patch([':id/toggle-status', ':id/status'])
   @Roles(
     Role.admin,
     Role.manager,
@@ -318,22 +328,23 @@ export class UsersController {
     (Role as any).super_admin || 'super_admin',
   )
   @ApiOperation({
-    summary: 'Toggle user active status (Admin & Manager/HOD of employee)',
+    summary: 'Toggle or update user active status (Admin & Manager/HOD of employee)',
     description:
-      'Toggles a user account between active (true) and inactive (false). Allowed ONLY for Super Admin, Admin, and assigned Manager/HOD of the employee.',
+      'Toggles or updates a user account active status. Allowed ONLY for Super Admin, Admin, and assigned Manager/HOD of the employee.',
   })
   @ApiParam({ name: 'id', type: Number, description: 'Target User ID' })
-  @ApiResponse({ status: 200, description: 'User active status toggled successfully' })
+  @ApiResponse({ status: 200, description: 'User active status updated successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized token or session revoked' })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden: Only Admin or assigned Manager/HOD can toggle user status',
+    description: 'Forbidden: Only Admin or assigned Manager/HOD can change user status',
   })
   @ApiResponse({ status: 404, description: 'User not found' })
   async toggleStatus(
     @Param('id', ParseIntPipe) id: number,
     @GetUser() currentUser: IUserPayload,
+    @Body('is_active') explicitIsActive?: boolean,
   ) {
-    return this.usersService.toggleStatus(id, currentUser);
+    return this.usersService.toggleStatus(id, currentUser, explicitIsActive);
   }
 }

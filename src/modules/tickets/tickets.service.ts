@@ -180,7 +180,8 @@ export class TicketsService {
       newValues: { ticket_no: ticket.ticket_no, priority: ticket.priority },
     });
 
-    // Send Mail Notifications in background (non-blocking for instant HTTP response)
+    // Send Mail Notifications in background (Disabled / Commented out)
+    /*
     this.mailService
       .sendMail({
         to: ticket.user.email,
@@ -226,6 +227,7 @@ export class TicketsService {
           this.logger.error(`Failed to send assignment email: ${err.message}`),
         );
     }
+    */
 
     return this.findOne(ticket.id);
   }
@@ -525,6 +527,7 @@ export class TicketsService {
       },
     });
 
+    /*
     this.mailService
       .sendMail({
         to: newAssignee.email,
@@ -544,6 +547,7 @@ export class TicketsService {
       .catch((err) =>
         this.logger.error(`Failed to send reassignment email: ${err.message}`),
       );
+    */
 
     return updated;
   }
@@ -650,6 +654,7 @@ export class TicketsService {
       details: { reason: dto.reason },
     });
 
+    /*
     await this.mailService.sendMail({
       to: ticket.user.email,
       subject: `Ticket Escalated: ${ticket.ticket_no}`,
@@ -666,6 +671,7 @@ export class TicketsService {
         reason: dto.reason,
       },
     });
+    */
 
     return updated;
   }
