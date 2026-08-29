@@ -144,11 +144,17 @@ export class SubcategoriesService {
     };
   }
 
-  async getDropdown(category_id?: number, is_active = true, default_assignee_id?: number) {
+  async getDropdown(
+    category_id?: number,
+    is_active = true,
+    default_assignee_id?: number,
+    department_id?: number,
+  ) {
     const where: any = {};
     if (category_id) where.category_id = category_id;
+    if (department_id) where.category = { department_id };
     if (is_active !== undefined) where.is_active = is_active;
-    if (default_assignee_id) where.default_assignee_id = default_assignee_id
+    if (default_assignee_id) where.default_assignee_id = default_assignee_id;
 
     const subcategories = await this.prisma.subcategory.findMany({
       where,

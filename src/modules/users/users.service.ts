@@ -36,10 +36,11 @@ export class UsersService {
   //  Check if a role string or enum is Admin or Super Admin
   private isAdminOrSuperAdmin(role: string): boolean {
     if (!role) return false;
-    const normalized = role.toLowerCase();
+    const normalized = String(role).toLowerCase().trim();
     return (
       normalized === 'admin' ||
       normalized === 'super_admin' ||
+      normalized === 'superadmin' ||
       normalized === Role.admin ||
       normalized === (Role as any).super_admin
     );
@@ -142,43 +143,32 @@ export class UsersService {
       });
     }
 
-    // Send Welcome Email asynchronously in background (Disabled / Commented out)
-    /*
-    this.mailService
-      .sendMail({
-        to: user.email,
-        subject: 'Welcome to BOM ServiceHub',
-        template: 'user-creation',
-        context: {
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        },
-      })
-      .catch((err) =>
-        this.logger.error(`Failed to send welcome email: ${err.message}`),
-      );
-    */
+    // Send Welcome Email asynchronously in background with default password
+    // this.mailService
+    //   .sendMail({
+    //     to: user.email,
+    //     subject: 'Welcome to BOM ServiceHub',
+    //     template: 'user-creation',
+    //     context: {
+    //       name: user.name,
+    //       email: user.email,
+    //       role: user.role,
+    //       password: createUserDto.password,
+    //     },
+    //   })
+    //   .catch((err) =>
+    //     this.logger.error(`Failed to send welcome email: ${err.message}`),
+    //   );
 
     return user;
   }
 
-  // Get all users (Super Admin/Admin: All users, Manager/HOD: Subordinates only)
+  // Get all users (Supports search, role, department_id, and active status filters)
   async findAll(query: ListUsersDto, currentUser?: IUserPayload) {
     let page = Math.max(1, query.page || 1);
     const limit = Math.min(100, query.limit || 10);
 
     const filters: Prisma.UserWhereInput[] = [];
-
-    // Filter by hierarchy: If not Super Admin or Admin, restrict to users working under currentUser (as Manager or HOD)
-    if (currentUser && !this.isAdminOrSuperAdmin(currentUser.role)) {
-      filters.push({
-        OR: [
-          { reporting_manager_id: currentUser.id },
-          { hod_id: currentUser.id },
-        ],
-      });
-    }
 
     const searchTerm = query.search?.trim();
     if (searchTerm) {
@@ -191,15 +181,15 @@ export class UsersService {
       });
     }
 
-    if (query.role) {
+    if (query.role && (query.role as string) !== 'ALL' && (query.role as string) !== 'all') {
       filters.push({ role: query.role });
     }
 
-    if (query.department_id) {
-      filters.push({ department_id: query.department_id });
+    if (query.department_id && !isNaN(Number(query.department_id))) {
+      filters.push({ department_id: Number(query.department_id) });
     }
 
-    if (query.is_active !== undefined) {
+    if (query.is_active !== undefined && (query.is_active as any) !== 'ALL' && (query.is_active as any) !== 'all') {
       filters.push({ is_active: query.is_active });
     }
 
@@ -225,6 +215,8 @@ export class UsersService {
       orderBy: { created_at: 'desc' },
       select: this.getUserSelectFields(),
     });
+
+    console.log("users =====>>",users)
 
     return PaginationUtil.buildPaginatedResult(users, total, page, limit);
   }
@@ -254,9 +246,7 @@ export class UsersService {
 
     if (departmentId && !isNaN(departmentId)) {
       filters.push({ department_id: departmentId });
-    }
-
-    if (currentUser && !this.isAdminOrSuperAdmin(currentUser.role)) {
+    } else if (currentUser && !this.isAdminOrSuperAdmin(currentUser.role)) {
       const roleStr = String(currentUser.role).toLowerCase().trim();
 
       if (roleStr === 'hod') {

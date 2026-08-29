@@ -21,12 +21,16 @@ export class ListUsersDto {
 
   @ApiPropertyOptional({ enum: Role })
   @IsOptional()
-  @IsEnum(Role)
+  @Transform(({ value }) => {
+    if (!value || value === 'ALL' || value === 'all') return undefined;
+    return value;
+  })
   role?: Role;
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   @Transform(({ value }) => {
+    if (value === 'ALL' || value === 'all') return undefined;
     if (value === 'true' || value === true || value === '1' || value === 1) return true;
     if (value === 'false' || value === false || value === '0' || value === 0) return false;
     return undefined;
@@ -35,7 +39,9 @@ export class ListUsersDto {
 
   @ApiPropertyOptional({ example: "1" })
   @IsOptional()
-  @IsInt()
-  @Type(() => Number)
+  @Transform(({ value }) => {
+    if (!value || value === 'ALL' || value === 'all' || isNaN(Number(value))) return undefined;
+    return Number(value);
+  })
   department_id?: number;
 }

@@ -106,9 +106,6 @@
         Welcome to BOM ServiceHub
       </div>
     </div>
-    <div class="action-banner">
-      Welcome to BOM ServiceHub
-    </div>
     <div class="content">
       <p>Hello <strong><%= name %></strong>,</p>
       <p>Your user account has been successfully created on the BOM ServiceHub Portal.</p>
@@ -126,6 +123,12 @@
           <span class="label">Assigned Role:</span>
           <span class="value"><strong style="text-transform: uppercase;"><%= role %></strong></span>
         </div>
+        <% if (locals.password) { %>
+        <div class="detail-row">
+          <span class="label">Default Password:</span>
+          <span class="value"><code style="background-color: #f1f5f9; color: #0f172a; padding: 4px 8px; border-radius: 4px; font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; font-size: 14px; font-weight: 600; border: 1px solid #cbd5e1;"><%= password %></code></span>
+        </div>
+        <% } %>
       </div>
 
       <p style="margin-top: 20px;">Please log in using your registered email address and update your password upon your first sign in.</p>

@@ -110,11 +110,12 @@ export class SubcategoriesController {
   @ApiResponse({ status: 401, description: 'Unauthorized token or session revoked' })
   async getDropdown(
     @Query('category_id') category_id?: number,
+    @Query('department_id') department_id?: number,
     @Query('is_active') is_active: string = 'true',
     @Query('default_assignee_id') default_assignee_id?: number,
   ) {
     const isActiveBool = is_active.toLowerCase() === 'true';
-    return this.subcategoriesService.getDropdown(category_id, isActiveBool, default_assignee_id);
+    return this.subcategoriesService.getDropdown(category_id, isActiveBool, default_assignee_id, department_id);
   }
 
   @Get(':id')

@@ -76,9 +76,9 @@ export class MailService {
   }
 
   async sendMail(options: ISendEmailOptions): Promise<boolean> {
-    // Email notifications temporarily disabled
-    this.logger.warn(`Email notifications are currently disabled. Skipping email to ${options?.to} [${options?.subject}]`);
-    return true;
+    if (!this.isValidEmail(options.to)) {
+      throw new BadRequestException(`Invalid email address: ${options.to}`);
+    }
 
     // Enrich context with DateUtil formatted dates if date strings/objects are present
     const enrichedContext = {
