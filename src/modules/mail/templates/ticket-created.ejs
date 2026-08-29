@@ -38,8 +38,13 @@
       Ticket Created: <%= ticketNo %>
     </div>
     <div class="content">
-      <p>Hello <strong><%= name %></strong>,</p>
-      <p>Your support ticket has been created successfully. Our IT helpdesk team will process your request promptly.</p>
+      <% if (typeof isCc !== 'undefined' && isCc) { %>
+        <p>Hello,</p>
+        <p>Support ticket <strong><%= ticketNo %></strong> has been created by <strong><%= creatorName %></strong> (<%= creatorEmail %>)<% if (typeof assigneeName !== 'undefined' && assigneeName) { %> and assigned to <strong><%= assigneeName %></strong><% } %>.</p>
+      <% } else { %>
+        <p>Hello <strong><%= name %></strong>,</p>
+        <p>Your support ticket <strong><%= ticketNo %></strong> has been created successfully<% if (typeof assigneeName !== 'undefined' && assigneeName) { %> and assigned to <strong><%= assigneeName %></strong><% } %>.</p>
+      <% } %>
       
       <div class="ticket-card">
         <div class="detail-row">
@@ -62,7 +67,7 @@
         </div>
         <div class="detail-row">
           <span class="label">Assigned To:</span>
-          <span class="value"><%= assigneeName ? (assigneeName + ' (' + (assigneeEmail || '') + ')') : 'Unassigned (Pending Auto-Assignment)' %></span>
+          <span class="value"><strong><%= (typeof assigneeName !== 'undefined' && assigneeName) ? (assigneeName + (typeof assigneeEmail !== 'undefined' && assigneeEmail ? ' (' + assigneeEmail + ')' : '')) : 'Unassigned (Pending Auto-Assignment)' %></strong></span>
         </div>
         <div class="detail-row">
           <span class="label">Priority:</span>

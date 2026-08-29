@@ -151,10 +151,19 @@
       New Ticket Assigned: <%= ticketNo %>
     </div>
     <div class="content">
-      <p>Hello <strong><%= assigneeName %></strong>,</p>
-      <p>Ticket <strong><%= ticketNo %></strong> created by <strong><%= creatorName %></strong> (<%= creatorEmail %>) has been assigned to you.</p>
+      <% if (typeof isCc !== 'undefined' && isCc) { %>
+        <p>Hello,</p>
+        <p>Support ticket <strong><%= ticketNo %></strong> created by <strong><%= creatorName %></strong> (<%= creatorEmail %>) has been assigned to <strong><%= assigneeName %></strong><% if (typeof assigneeEmail !== 'undefined' && assigneeEmail) { %> (<%= assigneeEmail %>)<% } %>.</p>
+      <% } else { %>
+        <p>Hello <strong><%= assigneeName %></strong>,</p>
+        <p>Ticket <strong><%= ticketNo %></strong> created by <strong><%= creatorName %></strong> (<%= creatorEmail %>) has been assigned to you.</p>
+      <% } %>
 
       <div class="ticket-card">
+        <div class="detail-row">
+          <span class="label">Ticket No:</span>
+          <span class="value"><strong><%= ticketNo %></strong></span>
+        </div>
         <% if (subject) { %>
           <div class="detail-row">
             <span class="label">Subject:</span>
@@ -168,16 +177,28 @@
           </div>
         <% } %>
         <div class="detail-row">
-          <span class="label">Raised By:</span>
-          <span class="value"><%= creatorName %> (<%= creatorEmail %>)</span>
+          <span class="label">Raised By (Creator):</span>
+          <span class="value"><strong><%= creatorName %></strong> (<%= creatorEmail %>)</span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Assigned To:</span>
+          <span class="value"><strong><%= assigneeName %></strong><% if (typeof assigneeEmail !== 'undefined' && assigneeEmail) { %> (<%= assigneeEmail %>)<% } %></span>
         </div>
         <div class="detail-row">
           <span class="label">Priority:</span>
           <span class="value">
-            <span class="badge badge-priority-<%= priority ? priority.toLowerCase() : ' low' %>"><%= priority %></span>
-            </span>
-      </div>
-      <% if (dueAtFormatted) { %>
+            <span class="badge badge-priority-<%= priority ? priority.toLowerCase() : 'low' %>"><%= priority %></span>
+          </span>
+        </div>
+        <% if (typeof status !== 'undefined' && status) { %>
+        <div class="detail-row">
+          <span class="label">Status:</span>
+          <span class="value">
+            <span class="badge badge-status-<%= status ? status.toLowerCase() : 'open' %>"><%= status %></span>
+          </span>
+        </div>
+        <% } %>
+        <% if (dueAtFormatted) { %>
         <div class="detail-row">
           <span class="label">SLA Due Date:</span>
           <span class="value">
@@ -186,8 +207,8 @@
           </span>
         </div>
         <% } %>
+      </div>
     </div>
-  </div>
   <div class="footer">
     <p>This is an automated notification. Please do not reply directly to this email.</p>
   </div>

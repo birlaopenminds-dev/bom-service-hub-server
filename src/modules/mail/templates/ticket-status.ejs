@@ -127,10 +127,19 @@
       </div>
     </div>
     <div class="content">
-      <p>Hello <strong><%= name %></strong>,</p>
-      <p>The status for your ticket <strong><%= ticketNo %></strong> has been updated to <strong class="badge-status"><%= status %></strong>.</p>
+      <% if (typeof isCc !== 'undefined' && isCc) { %>
+        <p>Hello,</p>
+        <p>The status for ticket <strong><%= ticketNo %></strong> has been updated to <strong class="badge-status"><%= status %></strong><% if (typeof updatedByName !== 'undefined' && updatedByName) { %> by <strong><%= updatedByName %></strong><% } %>.</p>
+      <% } else { %>
+        <p>Hello <strong><%= typeof name !== 'undefined' && name ? name : '' %></strong>,</p>
+        <p>The status for ticket <strong><%= ticketNo %></strong> has been updated to <strong class="badge-status"><%= status %></strong><% if (typeof updatedByName !== 'undefined' && updatedByName) { %> by <strong><%= updatedByName %></strong><% } %>.</p>
+      <% } %>
 
       <div class="ticket-card">
+        <div class="detail-row">
+          <span class="label">Ticket No:</span>
+          <span class="value"><strong><%= ticketNo %></strong></span>
+        </div>
         <% if (subject) { %>
           <div class="detail-row">
             <span class="label">Subject:</span>
@@ -155,6 +164,10 @@
             <span class="value"><%= assigneeName %> (<%= assigneeEmail %>)</span>
           </div>
         <% } %>
+        <div class="detail-row">
+          <span class="label">New Status:</span>
+          <span class="value"><strong class="badge-status"><%= status %></strong></span>
+        </div>
       </div>
     </div>
     <div class="footer">

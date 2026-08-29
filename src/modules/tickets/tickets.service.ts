@@ -38,12 +38,176 @@ export class TicketsService {
 
   private getTicketIncludeRelations() {
     return {
-      user: { select: { id: true, name: true, email: true, role: true } },
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          reporting_manager: { select: { id: true, name: true, email: true } },
+          hod: { select: { id: true, name: true, email: true } },
+        },
+      },
       department: { select: { id: true, name: true } },
       category: { select: { id: true, name: true } },
       subcategory: { select: { id: true, name: true, tat_hours: true } },
-      assignee: { select: { id: true, name: true, email: true, role: true } },
+      assignee: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          reporting_manager: { select: { id: true, name: true, email: true } },
+          hod: { select: { id: true, name: true, email: true } },
+        },
+      },
     };
+  }
+
+  private async sendNotificationWithCc(
+    ticket: any,
+    template: string,
+    subject: string,
+    actorUserId: number,
+    extraContext: Record<string, any> = {},
+  ) {
+    try {
+      const creator = ticket.user;
+      const assignee = ticket.assignee;
+
+      // 1. Gather Creator's RM & HOD
+      const creatorCcEmails: string[] = [];
+      if (creator?.reporting_manager?.email) {
+        const rmEmail = creator.reporting_manager.email.trim();
+        if (rmEmail && rmEmail.toLowerCase() !== creator.email.toLowerCase()) {
+          creatorCcEmails.push(rmEmail);
+        }
+      }
+      if (creator?.hod?.email) {
+        const hodEmail = creator.hod.email.trim();
+        if (
+          hodEmail &&
+          hodEmail.toLowerCase() !== creator.email.toLowerCase() &&
+          !creatorCcEmails.some((e) => e.toLowerCase() === hodEmail.toLowerCase())
+        ) {
+          creatorCcEmails.push(hodEmail);
+        }
+      }
+
+      // 2. Gather Assignee's RM & HOD
+      const assigneeCcEmails: string[] = [];
+      if (assignee?.reporting_manager?.email) {
+        const rmEmail = assignee.reporting_manager.email.trim();
+        if (rmEmail && rmEmail.toLowerCase() !== assignee.email.toLowerCase()) {
+          assigneeCcEmails.push(rmEmail);
+        }
+      }
+      if (assignee?.hod?.email) {
+        const hodEmail = assignee.hod.email.trim();
+        if (
+          hodEmail &&
+          hodEmail.toLowerCase() !== assignee.email.toLowerCase() &&
+          !assigneeCcEmails.some((e) => e.toLowerCase() === hodEmail.toLowerCase())
+        ) {
+          assigneeCcEmails.push(hodEmail);
+        }
+      }
+
+      // 3. Determine actor's email (to exclude actor from CC list)
+      let actorEmail: string | null = null;
+      if (creator && creator.id === actorUserId) {
+        actorEmail = creator.email;
+      } else if (assignee && assignee.id === actorUserId) {
+        actorEmail = assignee.email;
+      }
+
+      // Determine Primary TO Recipients (excluding actor)
+      const toRecipients: { email: string; name: string }[] = [];
+
+      if (creator?.email && creator.id !== actorUserId) {
+        toRecipients.push({ email: creator.email, name: creator.name });
+      }
+
+      if (
+        assignee?.email &&
+        assignee.id !== actorUserId &&
+        assignee.id !== creator?.id
+      ) {
+        toRecipients.push({ email: assignee.email, name: assignee.name });
+      }
+
+      const toEmailsLower = new Set(toRecipients.map((r) => r.email.toLowerCase()));
+
+      // Deduplicate CC Emails (excluding TO recipients, creator, assignee, and actor)
+      const rawAllCc = [...creatorCcEmails, ...assigneeCcEmails];
+      const ccList = Array.from(
+        new Set(
+          rawAllCc.filter(
+            (email) =>
+              email &&
+              !toEmailsLower.has(email.toLowerCase()) &&
+              (actorEmail ? email.toLowerCase() !== actorEmail.toLowerCase() : true),
+          ),
+        ),
+      );
+
+      const commonContext = {
+        ticketNo: ticket.ticket_no,
+        subject: ticket.subject,
+        description: ticket.description,
+        creatorName: creator?.name || null,
+        creatorEmail: creator?.email || null,
+        assigneeName: assignee?.name || null,
+        assigneeEmail: assignee?.email || null,
+        priority: ticket.priority,
+        status: ticket.status,
+        dueAt: ticket.due_at,
+        ...extraContext,
+      };
+
+      // 4. Send to Primary TO Recipients (isCc: false)
+      for (const recipient of toRecipients) {
+        this.mailService
+          .sendMail({
+            to: recipient.email,
+            subject,
+            template,
+            context: {
+              ...commonContext,
+              name: recipient.name,
+              isCc: false,
+            },
+          })
+          .catch((err) =>
+            this.logger.error(
+              `Failed to send ${template} notification to ${recipient.email}: ${err.message}`,
+            ),
+          );
+      }
+
+      // 5. Send to CC Recipients (isCc: true)
+      if (ccList.length > 0) {
+        this.mailService
+          .sendMail({
+            to: ccList,
+            subject,
+            template,
+            context: {
+              ...commonContext,
+              isCc: true,
+            },
+          })
+          .catch((err) =>
+            this.logger.error(
+              `Failed to send ${template} CC notification: ${err.message}`,
+            ),
+          );
+      }
+    } catch (err) {
+      this.logger.error(
+        `Error in sendNotificationWithCc for ${template}: ${err.message}`,
+      );
+    }
   }
 
   private async getManagedUserIds(user: any): Promise<number[]> {
@@ -180,54 +344,139 @@ export class TicketsService {
       newValues: { ticket_no: ticket.ticket_no, priority: ticket.priority },
     });
 
-    // Send Mail Notifications in background (Disabled / Commented out)
-    /*
+    // 1. Gather CC Emails for Creator Confirmation Email (Creator's RM & HOD)
+    const creatorCcEmails: string[] = [];
+    if (ticket.user?.reporting_manager?.email) {
+      const rmEmail = ticket.user.reporting_manager.email.trim();
+      if (rmEmail && rmEmail.toLowerCase() !== ticket.user.email.toLowerCase()) {
+        creatorCcEmails.push(rmEmail);
+      }
+    }
+    if (ticket.user?.hod?.email) {
+      const hodEmail = ticket.user.hod.email.trim();
+      if (
+        hodEmail &&
+        hodEmail.toLowerCase() !== ticket.user.email.toLowerCase() &&
+        !creatorCcEmails.some((e) => e.toLowerCase() === hodEmail.toLowerCase())
+      ) {
+        creatorCcEmails.push(hodEmail);
+      }
+    }
+
+    const commonMailContext = {
+      ticketNo: ticket.ticket_no,
+      subject: ticket.subject,
+      description: ticket.description,
+      creatorName: ticket.user.name,
+      creatorEmail: ticket.user.email,
+      assigneeName: ticket.assignee?.name || null,
+      assigneeEmail: ticket.assignee?.email || null,
+      priority: ticket.priority,
+      status: ticket.status,
+      dueAt: ticket.due_at,
+    };
+
+    // 1a. Send personalized confirmation email to ticket creator (isCc: false)
     this.mailService
       .sendMail({
         to: ticket.user.email,
-        subject: `Ticket Created: ${ticket.ticket_no}`,
+        subject: `[BOM Service Hub] Ticket Created: ${ticket.ticket_no} - ${ticket.subject}`,
         template: 'ticket-created',
         context: {
+          ...commonMailContext,
           name: ticket.user.name,
-          ticketNo: ticket.ticket_no,
-          subject: ticket.subject,
-          description: ticket.description,
-          creatorName: ticket.user.name,
-          creatorEmail: ticket.user.email,
-          assigneeName: ticket.assignee?.name || null,
-          assigneeEmail: ticket.assignee?.email || null,
-          priority: ticket.priority,
-          status: ticket.status,
-          dueAt: ticket.due_at,
+          isCc: false,
         },
       })
       .catch((err) =>
-        this.logger.error(`Failed to send creation email: ${err.message}`),
+        this.logger.error(`Failed to send creator email: ${err.message}`),
       );
 
-    if (ticket.assignee) {
+    // 1b. Send notification email to Creator's RM & HOD (isCc: true)
+    if (creatorCcEmails.length > 0) {
       this.mailService
         .sendMail({
-          to: ticket.assignee.email,
-          subject: `Ticket Assigned: ${ticket.ticket_no}`,
-          template: 'ticket-assigned',
+          to: creatorCcEmails,
+          subject: `[BOM Service Hub] Ticket Created: ${ticket.ticket_no} - ${ticket.subject}`,
+          template: 'ticket-created',
           context: {
-            assigneeName: ticket.assignee.name,
-            assigneeEmail: ticket.assignee.email,
-            ticketNo: ticket.ticket_no,
-            subject: ticket.subject,
-            description: ticket.description,
-            creatorName: ticket.user.name,
-            creatorEmail: ticket.user.email,
-            priority: ticket.priority,
-            dueAt: ticket.due_at,
+            ...commonMailContext,
+            isCc: true,
           },
         })
         .catch((err) =>
-          this.logger.error(`Failed to send assignment email: ${err.message}`),
+          this.logger.error(`Failed to send creator CC email: ${err.message}`),
         );
     }
-    */
+
+    // 2. Send notification emails for assignee (only if assigned to a different user)
+    if (
+      ticket.assignee &&
+      ticket.assignee.email &&
+      ticket.assignee.id !== ticket.user.id
+    ) {
+      const rawAssigneeCc: string[] = [];
+
+      // Add Assignee's RM & HOD (based on assignee's department/hierarchy)
+      if (ticket.assignee.reporting_manager?.email) {
+        rawAssigneeCc.push(ticket.assignee.reporting_manager.email.trim());
+      }
+      if (ticket.assignee.hod?.email) {
+        rawAssigneeCc.push(ticket.assignee.hod.email.trim());
+      }
+
+      // Filter out assignee's email AND any CC emails that already received the creation email (e.g. shared RM/HOD)
+      const creatorCcLowerSet = new Set(
+        creatorCcEmails.map((e) => e.toLowerCase()),
+      );
+
+      const assigneeCcList = Array.from(
+        new Set(
+          rawAssigneeCc.filter(
+            (email) =>
+              email &&
+              email.toLowerCase() !== ticket.assignee.email.toLowerCase() &&
+              !creatorCcLowerSet.has(email.toLowerCase()),
+          ),
+        ),
+      );
+
+      // 2a. Send personalized notification email to Assignee (isCc: false)
+      this.mailService
+        .sendMail({
+          to: ticket.assignee.email,
+          subject: `[BOM Service Hub] Ticket Assigned: ${ticket.ticket_no} - ${ticket.subject}`,
+          template: 'ticket-assigned',
+          context: {
+            ...commonMailContext,
+            assigneeName: ticket.assignee.name,
+            assigneeEmail: ticket.assignee.email,
+            isCc: false,
+          },
+        })
+        .catch((err) =>
+          this.logger.error(`Failed to send assignee email: ${err.message}`),
+        );
+
+      // 2b. Send notification email to Assignee's RM & HOD (isCc: true)
+      if (assigneeCcList.length > 0) {
+        this.mailService
+          .sendMail({
+            to: assigneeCcList,
+            subject: `[BOM Service Hub] Ticket Assigned: ${ticket.ticket_no} - ${ticket.subject}`,
+            template: 'ticket-assigned',
+            context: {
+              ...commonMailContext,
+              assigneeName: ticket.assignee.name,
+              assigneeEmail: ticket.assignee.email,
+              isCc: true,
+            },
+          })
+          .catch((err) =>
+            this.logger.error(`Failed to send assignee CC email: ${err.message}`),
+          );
+      }
+    }
 
     return this.findOne(ticket.id);
   }
@@ -464,26 +713,26 @@ export class TicketsService {
       },
     });
 
-    // this.mailService
-    //   .sendMail({
-    //     to: ticket.user.email,
-    //     subject: `Ticket Status Updated: ${ticket.ticket_no}`,
-    //     template: 'ticket-status',
-    //     context: {
-    //       name: ticket.user.name,
-    //       ticketNo: ticket.ticket_no,
-    //       subject: ticket.subject,
-    //       description: ticket.description,
-    //       creatorName: ticket.user.name,
-    //       creatorEmail: ticket.user.email,
-    //       assigneeName: ticket.assignee?.name || null,
-    //       assigneeEmail: ticket.assignee?.email || null,
-    //       status: dto.status,
-    //     },
-    //   })
-    //   .catch((err) =>
-    //     this.logger.error(`Failed to send status update email: ${err.message}`),
-    //   );
+    let updatedByName = 'Support Team';
+    if (userId === updated.user?.id) {
+      updatedByName = updated.user.name;
+    } else if (userId === updated.assignee?.id) {
+      updatedByName = updated.assignee.name;
+    } else {
+      const actorUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true },
+      });
+      if (actorUser) updatedByName = actorUser.name;
+    }
+
+    this.sendNotificationWithCc(
+      updated,
+      'ticket-status',
+      `[BOM Service Hub] Ticket Status Updated: ${updated.ticket_no} - ${updated.status}`,
+      userId,
+      { status: updated.status, updatedByName },
+    );
 
     return updated;
   }
@@ -698,32 +947,13 @@ export class TicketsService {
       details: { comment: sanitizedComment },
     });
 
-    // Notify ticket creator or assignee
-    const notifyRecipient =
-      user.id === ticket.user_id ? ticket.assignee?.email : ticket.user.email;
-
-    if (notifyRecipient) {
-      const recipientName =
-        user.id === ticket.user_id ? ticket.assignee?.name || 'Assignee' : ticket.user.name;
-
-      // await this.mailService.sendMail({
-      //   to: notifyRecipient,
-      //   subject: `New Comment on Ticket: ${ticket.ticket_no}`,
-      //   template: 'ticket-comment',
-      //   context: {
-      //     name: recipientName,
-      //     ticketNo: ticket.ticket_no,
-      //     author: user.name,
-      //     comment: sanitizedComment,
-      //     subject: ticket.subject,
-      //     description: ticket.description,
-      //     creatorName: ticket.user.name,
-      //     creatorEmail: ticket.user.email,
-      //     assigneeName: ticket.assignee?.name || null,
-      //     assigneeEmail: ticket.assignee?.email || null,
-      //   },
-      // });
-    }
+    this.sendNotificationWithCc(
+      ticket,
+      'ticket-comment',
+      `[BOM Service Hub] New Comment on Ticket: ${ticket.ticket_no}`,
+      user.id,
+      { author: user.name, comment: sanitizedComment },
+    );
 
     return log;
   }

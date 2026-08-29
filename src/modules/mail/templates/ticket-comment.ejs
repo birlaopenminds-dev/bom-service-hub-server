@@ -132,12 +132,20 @@
       New Comment: Ticket <%= ticketNo %>
     </div>
     <div class="content">
-      <p>Hello <strong><%= name %></strong>,</p>
-      <p><strong><%= author %></strong> posted a new comment:</p>
+      <% if (typeof isCc !== 'undefined' && isCc) { %>
+        <p>Hello,</p>
+      <% } else { %>
+        <p>Hello <strong><%= typeof name !== 'undefined' && name ? name : '' %></strong>,</p>
+      <% } %>
+      <p><strong><%= author %></strong> posted a new comment on ticket <strong><%= ticketNo %></strong>:</p>
 
       <div class="comment-box"><%= comment %></div>
 
       <div class="ticket-card">
+        <div class="detail-row">
+          <span class="label">Ticket No:</span>
+          <span class="value"><strong><%= ticketNo %></strong></span>
+        </div>
         <% if (subject) { %>
           <div class="detail-row">
             <span class="label">Subject:</span>

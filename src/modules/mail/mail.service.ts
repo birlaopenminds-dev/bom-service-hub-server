@@ -28,7 +28,10 @@ export class MailService {
       throw new Error('Mail configuration is missing');
     }
 
-    this.fromEmail = mailConfig.from;
+    const rawFrom = mailConfig.from || process.env.MAIL_FROM || process.env.SMTP_USER;
+    const fromName = mailConfig.fromName || process.env.MAIL_FROM_NAME || 'BOM Service Hub';
+    this.fromEmail = rawFrom && rawFrom.includes('<') ? rawFrom : `"${fromName}" <${rawFrom}>`;
+
     this.templatePath = path.join(
       process.cwd(),
       'dist',
@@ -76,8 +79,11 @@ export class MailService {
   }
 
   async sendMail(options: ISendEmailOptions): Promise<boolean> {
-    if (!this.isValidEmail(options.to)) {
-      throw new BadRequestException(`Invalid email address: ${options.to}`);
+    const recipients = Array.isArray(options.to) ? options.to : [options.to];
+    for (const email of recipients) {
+      if (!this.isValidEmail(email)) {
+        throw new BadRequestException(`Invalid email address: ${email}`);
+      }
     }
 
     // Enrich context with DateUtil formatted dates if date strings/objects are present
@@ -107,6 +113,8 @@ export class MailService {
       const info = await this.transporter.sendMail({
         from: this.fromEmail,
         to: options.to,
+        cc: options.cc,
+        bcc: options.bcc,
         subject: options.subject,
         html,
         attachments: [...defaultAttachments, ...(options.attachments || [])],
@@ -115,10 +123,12 @@ export class MailService {
       // Log success
       await this.createEmailLog(options, EmailStatus.sent);
 
-      this.logger.log(`Email sent to ${options.to} [${options.subject}] - ${info.messageId}`);
+      const recipientLog = Array.isArray(options.to) ? options.to.join(', ') : options.to;
+      this.logger.log(`Email sent to ${recipientLog} [${options.subject}] - ${info.messageId}`);
       return true;
     } catch (error) {
-      this.logger.error(`Email send failed to ${options.to}: ${error.message}`, error.stack);
+      const recipientLog = Array.isArray(options.to) ? options.to.join(', ') : options.to;
+      this.logger.error(`Email send failed to ${recipientLog}: ${error.message}`, error.stack);
 
       // Log failure
       await this.createEmailLog(options, EmailStatus.failed, error.message);
@@ -153,9 +163,15 @@ export class MailService {
     error?: string,
   ): Promise<void> {
     try {
+      const toStr = Array.isArray(options.to) ? options.to.join(', ') : options.to;
+      const ccStr = options.cc
+        ? ` (CC: ${Array.isArray(options.cc) ? options.cc.join(', ') : options.cc})`
+        : '';
+      const recipientSummary = `${toStr}${ccStr}`;
+
       await this.prisma.emailLog.create({
         data: {
-          recipient: options.to,
+          recipient: recipientSummary,
           subject: options.subject,
           template: options.template,
           status,
@@ -168,8 +184,9 @@ export class MailService {
   }
 
   private isValidEmail(email: string): boolean {
+    if (!email || typeof email !== 'string') return false;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
+    return emailRegex.test(email.trim());
   }
 
 }
