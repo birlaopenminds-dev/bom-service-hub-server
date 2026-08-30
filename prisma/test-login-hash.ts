@@ -62,6 +62,39 @@ async function testUserLogin() {
 
   // 4. Plaintext Compare
   console.log(`   4. Plaintext Match: ${passwordInput === user.password_hash ? '✅ MATCH' : '❌ NO MATCH'}`);
+
+  // 5. Test Common Default Passwords
+  console.log(`\n--- Testing Common Default Passwords against DB Hash ---`);
+  const commonPasswords = [
+    'Welcome@123',
+    'welcome@123',
+    'Welcome@1234',
+    'Welcome123',
+    'welcome123',
+    'Welcome@1',
+    'Admin@123',
+    'admin@123',
+    'Password@123',
+    'password',
+    '123456',
+    'Birla@123',
+    'birla123',
+    'Swapnil@123',
+    'swapnil123',
+  ];
+
+  let foundMatch = false;
+  for (const common of commonPasswords) {
+    if (await bcrypt.compare(common, user.password_hash)) {
+      console.log(`🎉 FOUND EXACT MATCHING PASSWORD IN DB: "${common}"`);
+      foundMatch = true;
+      break;
+    }
+  }
+
+  if (!foundMatch) {
+    console.log(`   None of the common default passwords matched. The hash requires the user's specific password.`);
+  }
 }
 
 testUserLogin()
