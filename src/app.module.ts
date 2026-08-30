@@ -90,10 +90,10 @@ import { SecurityHeadersMiddleware } from './common/middleware/security-headers.
       provide: APP_INTERCEPTOR,
       useClass: LoggingInterceptor,
     },
-    {
-      provide: APP_GUARD,
-      useClass: RateLimitGuard,
-    },
+    // {
+    //   provide: APP_GUARD,
+    //   useClass: RateLimitGuard,
+    // },
   ],
 })
 export class AppModule implements NestModule {
