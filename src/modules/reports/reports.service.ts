@@ -239,6 +239,10 @@ export class ReportsService {
     return [user.id];
   }
 
+  async getSummaryMetrics(user: any, filters: ReportFiltersDto) {
+    return this.getSummaryReport(user, filters);
+  }
+
   async getSummaryReport(user: any, filters: ReportFiltersDto) {
     const baseWhere = await this.buildWhereClause(user, filters);
     const now = new Date();
