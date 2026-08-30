@@ -20,20 +20,41 @@ async function importData() {
   // Helper to extract array for table from phpMyAdmin JSON structure
   const getTableData = (tableName: string): any[] => {
     if (Array.isArray(dbData)) {
-      const match = dbData.find((item: any) => item.type === 'header' || item.name === tableName);
-      if (match && Array.isArray(match.data)) return match.data;
+      // Find object matching type === 'table' and name === tableName
+      const tableObj = dbData.find(
+        (item: any) =>
+          item &&
+          (item.type === 'table' || item.type === 'table_data' || !item.type) &&
+          item.name &&
+          item.name.toLowerCase() === tableName.toLowerCase(),
+      );
+      if (tableObj && Array.isArray(tableObj.data)) {
+        return tableObj.data;
+      }
     }
-    if (dbData[tableName] && Array.isArray(dbData[tableName])) {
-      return dbData[tableName];
-    }
-    // Fallback: check array of table objects
-    for (const key of Object.keys(dbData)) {
-      if (key.toLowerCase() === tableName.toLowerCase() && Array.isArray(dbData[key])) {
-        return dbData[key];
+
+    if (dbData && typeof dbData === 'object' && !Array.isArray(dbData)) {
+      if (dbData[tableName] && Array.isArray(dbData[tableName])) {
+        return dbData[tableName];
+      }
+      for (const key of Object.keys(dbData)) {
+        if (key.toLowerCase() === tableName.toLowerCase() && Array.isArray(dbData[key])) {
+          return dbData[key];
+        }
       }
     }
     return [];
   };
+
+  // Inspect and log detected keys/tables in json file
+  if (Array.isArray(dbData)) {
+    const tableNamesFound = dbData
+      .filter((item: any) => item && item.name)
+      .map((item: any) => `${item.name} (${item.type || 'array'})`);
+    console.log(`Found entities in JSON file: ${tableNamesFound.join(', ')}`);
+  } else if (dbData && typeof dbData === 'object') {
+    console.log(`Found keys in JSON object: ${Object.keys(dbData).join(', ')}`);
+  }
 
   try {
     console.log('--- Starting Data Migration ---');
