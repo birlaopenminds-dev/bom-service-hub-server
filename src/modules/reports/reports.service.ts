@@ -90,10 +90,10 @@ export class ReportsService {
   ): Promise<Prisma.TicketWhereInput> {
     const conditions: Prisma.TicketWhereInput[] = [];
 
-    const isSuperAdmin = this.isSuperAdminUser(user);
+    const isAdminOrSuperAdmin = this.isSuperAdminUser(user);
 
-    // Role-based visibility scoping
-    if (user && !isSuperAdmin) {
+    // Role-based visibility scoping: Admins and Super Admins see ALL tickets
+    if (user && !isAdminOrSuperAdmin) {
       const managedUserIds = await this.getManagedUserIds(user);
       conditions.push({
         OR: [
@@ -172,7 +172,9 @@ export class ReportsService {
     return (
       roleStr === 'super_admin' ||
       roleStr === 'superadmin' ||
-      user.role === (Role as any).super_admin
+      roleStr === 'admin' ||
+      user.role === (Role as any).super_admin ||
+      user.role === Role.admin
     );
   }
 
@@ -237,17 +239,17 @@ export class ReportsService {
     return [user.id];
   }
 
-  async getSummaryMetrics(user: any, filters: ReportFiltersDto) {
-    const isSuperAdmin = this.isSuperAdminUser(user);
+  async getSummaryReport(user: any, filters: ReportFiltersDto) {
     const baseWhere = await this.buildWhereClause(user, filters);
-
     const now = new Date();
+    const isAdminOrSuperAdmin = this.isSuperAdminUser(user);
+
     const slaBreachedCondition: Prisma.TicketWhereInput = {
       due_at: { lt: now },
       NOT: { status: { in: [TicketStatus.resolved, TicketStatus.closed] } },
     };
 
-    if (isSuperAdmin) {
+    if (isAdminOrSuperAdmin) {
       const [
         total,
         open,
@@ -255,6 +257,18 @@ export class ReportsService {
         resolved,
         closed,
         slaBreached,
+        myRaisedTotal,
+        myRaisedOpen,
+        myRaisedWip,
+        myRaisedResolved,
+        myRaisedClosed,
+        myRaisedSlaBreached,
+        myAssignedTotal,
+        myAssignedOpen,
+        myAssignedWip,
+        myAssignedResolved,
+        myAssignedClosed,
+        myAssignedSlaBreached,
       ] = await Promise.all([
         this.prisma.ticket.count({ where: baseWhere }),
         this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.open }] } }),
@@ -262,6 +276,20 @@ export class ReportsService {
         this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.resolved }] } }),
         this.prisma.ticket.count({ where: { AND: [baseWhere, { status: TicketStatus.closed }] } }),
         this.prisma.ticket.count({ where: { AND: [baseWhere, slaBreachedCondition] } }),
+
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { user_id: user.id }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { user_id: user.id, status: TicketStatus.open }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { user_id: user.id, status: TicketStatus.wip }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { user_id: user.id, status: TicketStatus.resolved }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { user_id: user.id, status: TicketStatus.closed }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { user_id: user.id }, slaBreachedCondition] } }),
+
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { assigned_to: user.id }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { assigned_to: user.id, status: TicketStatus.open }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { assigned_to: user.id, status: TicketStatus.wip }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { assigned_to: user.id, status: TicketStatus.resolved }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { assigned_to: user.id, status: TicketStatus.closed }] } }),
+        this.prisma.ticket.count({ where: { AND: [baseWhere, { assigned_to: user.id }, slaBreachedCondition] } }),
       ]);
 
       return {
@@ -271,6 +299,26 @@ export class ReportsService {
         resolvedTickets: resolved,
         closedTickets: closed,
         slaBreachedTickets: slaBreached,
+        ticketsRaisedByMe: {
+          total: myRaisedTotal,
+          byStatus: {
+            open: myRaisedOpen,
+            wip: myRaisedWip,
+            resolved: myRaisedResolved,
+            closed: myRaisedClosed,
+          },
+          slaBreached: myRaisedSlaBreached,
+        },
+        ticketsRaisedOnMe: {
+          total: myAssignedTotal,
+          byStatus: {
+            open: myAssignedOpen,
+            wip: myAssignedWip,
+            resolved: myAssignedResolved,
+            closed: myAssignedClosed,
+          },
+          slaBreached: myAssignedSlaBreached,
+        },
       };
     }
 
