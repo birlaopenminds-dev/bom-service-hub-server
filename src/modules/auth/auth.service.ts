@@ -72,17 +72,16 @@ export class AuthService {
     const secret = this.configService.get<string>('jwt.secret') || process.env.JWT_SECRET || 'qY0VmIw44R7oL7OVB8emoFiMgdc5KPLWSeHKQohe9zX';
     const refreshSecret = this.configService.get<string>('jwt.refreshSecret') || process.env.JWT_REFRESH_SECRET || '3fMAetyzK26xAsQD7no84YMGHY9lf8tLDUmqpVFCyGe';
 
-    const expiresIn = this.configService.get<string>('jwt.expiresIn') || process.env.JWT_EXPIRATION || '15m';
-    const refreshExpiresIn = this.configService.get<string>('jwt.refreshExpiresIn') || process.env.JWT_REFRESH_EXPIRATION || '7d';
-
+    // Explicit 900 seconds (15 mins) for Access Token
     const accessToken = this.jwtService.sign(payload, {
       secret,
-      expiresIn: expiresIn as any,
+      expiresIn: 900,
     });
 
+    // Explicit 604800 seconds (7 days) for Refresh Token
     const refreshToken = this.jwtService.sign(payload, {
       secret: refreshSecret,
-      expiresIn: refreshExpiresIn as any,
+      expiresIn: 604800,
     });
 
     return {
