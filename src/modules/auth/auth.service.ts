@@ -33,6 +33,8 @@ export class AuthService {
   async validateUser(email: string, pass: string): Promise<any> {
     const cleanEmail = email ? email.trim().toLowerCase() : '';
 
+    this.logger.log(`Attempting login validation for: [${cleanEmail}]`);
+
     const user = await this.prisma.user.findFirst({
       where: {
         email: {
@@ -43,21 +45,24 @@ export class AuthService {
     });
 
     if (!user) {
-      this.logger.warn(`Login failed: No user account found with email [${email}]`);
+      this.logger.warn(`Login failed: No user account found with email [${cleanEmail}]`);
       return null;
     }
 
     if (!user.is_active) {
-      this.logger.warn(`Login failed: User account [${email}] is marked inactive (is_active = false)`);
+      this.logger.warn(`Login failed: User account [${cleanEmail}] is marked inactive (is_active = false)`);
       return null;
     }
+
+    this.logger.log(`User found (ID: ${user.id}). Stored hash prefix: [${user.password_hash.substring(0, 15)}...]`);
 
     const isMatch = await EncryptionUtil.comparePassword(pass, user.password_hash);
     if (!isMatch) {
-      this.logger.warn(`Login failed: Password mismatch for user [${email}]`);
+      this.logger.warn(`Login failed: Password mismatch for user [${cleanEmail}]`);
       return null;
     }
 
+    this.logger.log(`Login SUCCESS for user [${cleanEmail}] (ID: ${user.id})`);
     return user;
   }
 

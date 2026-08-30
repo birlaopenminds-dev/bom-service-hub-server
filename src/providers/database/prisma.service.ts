@@ -8,7 +8,9 @@ export class PrismaService
   private readonly logger = new Logger(PrismaService.name);
 
   async onModuleInit() {
-    this.logger.log('Connecting to PostgreSQL database via Prisma...');
+    const dbUrl = process.env.DATABASE_URL || 'NOT_SET';
+    const sanitizedUrl = dbUrl.replace(/:[^:@]+@/, ':****@');
+    this.logger.log(`Connecting to PostgreSQL database via Prisma: ${sanitizedUrl}`);
     await this.$connect();
     this.logger.log('Database connection established successfully.');
   }
