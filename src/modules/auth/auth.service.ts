@@ -89,6 +89,19 @@ export class AuthService {
       );
     }
 
+    // Auto-upgrade legacy hash format (e.g. MD5, SHA1, or MD5+Bcrypt) to standard Bcrypt on login
+    if (user.password_hash && (!user.password_hash.startsWith('$2b$') && !user.password_hash.startsWith('$2a$'))) {
+      try {
+        const upgradedHash = await EncryptionUtil.hashPassword(loginDto.password);
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { password_hash: upgradedHash },
+        });
+      } catch (err) {
+        this.logger.error(`Failed to auto-upgrade password hash for user ${user.email}: ${err.message}`);
+      }
+    }
+
     // Generate tokens
     const tokens = await this.generateTokens(user.id, user.email, user.role);
 
