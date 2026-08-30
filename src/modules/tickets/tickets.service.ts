@@ -487,14 +487,15 @@ export class TicketsService {
 
     const filters: Prisma.TicketWhereInput[] = [];
 
-    // Role-based visibility scoping matching hierarchy logic
-    const isSuperAdmin =
+    const isAdminOrSuperAdmin =
       String(user.role).toLowerCase() === 'super_admin' ||
-      user.role === Role.super_admin;
+      String(user.role).toLowerCase() === 'admin' ||
+      user.role === Role.super_admin ||
+      user.role === Role.admin;
 
     const filterType = (query.type || query.scope)?.trim().toLowerCase();
 
-    if (isSuperAdmin) {
+    if (isAdminOrSuperAdmin) {
       if (filterType === 'raised_by_me' || filterType === 'created_by_me') {
         filters.push({ user_id: user.id });
       } else if (filterType === 'raised_on_me' || filterType === 'assigned_to_me') {
@@ -648,10 +649,12 @@ export class TicketsService {
     }
 
     if (currentUser) {
-      const isSuperAdmin =
+      const isAdminOrSuperAdmin =
         String(currentUser.role).toLowerCase() === 'super_admin' ||
-        currentUser.role === Role.super_admin;
-      if (!isSuperAdmin) {
+        String(currentUser.role).toLowerCase() === 'admin' ||
+        currentUser.role === Role.super_admin ||
+        currentUser.role === Role.admin;
+      if (!isAdminOrSuperAdmin) {
         const managedUserIds = await this.getManagedUserIds(currentUser);
         const hasAccess =
           managedUserIds.includes(ticket.user_id) ||
