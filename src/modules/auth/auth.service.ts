@@ -69,14 +69,20 @@ export class AuthService {
   private async generateTokens(userId: number, email: string, role: string) {
     const payload = { sub: userId, email, role };
 
+    const secret = this.configService.get<string>('jwt.secret') || process.env.JWT_SECRET || 'qY0VmIw44R7oL7OVB8emoFiMgdc5KPLWSeHKQohe9zX';
+    const refreshSecret = this.configService.get<string>('jwt.refreshSecret') || process.env.JWT_REFRESH_SECRET || '3fMAetyzK26xAsQD7no84YMGHY9lf8tLDUmqpVFCyGe';
+
+    const expiresIn = this.configService.get<string>('jwt.expiresIn') || process.env.JWT_EXPIRATION || '15m';
+    const refreshExpiresIn = this.configService.get<string>('jwt.refreshExpiresIn') || process.env.JWT_REFRESH_EXPIRATION || '7d';
+
     const accessToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('jwt.secret'),
-      expiresIn: this.configService.get('jwt.expiresIn'),
+      secret,
+      expiresIn: expiresIn as any,
     });
 
     const refreshToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('jwt.refreshSecret'),
-      expiresIn: this.configService.get('jwt.refreshExpiresIn'),
+      secret: refreshSecret,
+      expiresIn: refreshExpiresIn as any,
     });
 
     return {
