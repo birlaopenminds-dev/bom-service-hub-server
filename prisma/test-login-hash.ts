@@ -42,10 +42,20 @@ async function testUserLogin() {
 
   console.log(`\n--- Testing Password Matching Algorithms ---`);
 
-  // 1. Direct Bcrypt Compare
+  // 1. Standard Bcrypt Compare
   try {
     const isBcryptMatch = await bcrypt.compare(passwordInput, user.password_hash);
-    console.log(`   1. Standard Bcrypt Compare: ${isBcryptMatch ? '✅ MATCH' : '❌ NO MATCH'}`);
+    console.log(`   1. Standard Bcrypt Compare ($2y$): ${isBcryptMatch ? '✅ MATCH' : '❌ NO MATCH'}`);
+
+    if (!isBcryptMatch && user.password_hash.startsWith('$2y$')) {
+      const hash2a = user.password_hash.replace(/^\$2y\$/, '$2a$');
+      const is2aMatch = await bcrypt.compare(passwordInput, hash2a);
+      console.log(`      Bcrypt Compare with $2a$ prefix: ${is2aMatch ? '✅ MATCH' : '❌ NO MATCH'}`);
+
+      const hash2b = user.password_hash.replace(/^\$2y\$/, '$2b$');
+      const is2bMatch = await bcrypt.compare(passwordInput, hash2b);
+      console.log(`      Bcrypt Compare with $2b$ prefix: ${is2bMatch ? '✅ MATCH' : '❌ NO MATCH'}`);
+    }
   } catch (e: any) {
     console.log(`   1. Standard Bcrypt Compare Error: ${e.message}`);
   }

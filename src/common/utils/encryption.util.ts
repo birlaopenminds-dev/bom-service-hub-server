@@ -16,34 +16,50 @@ export class EncryptionUtil {
 
     const trimmedHash = hashedText.trim();
 
-    // 1. Standard Bcrypt check ($2a$, $2b$, $2y$)
-    if (
-      trimmedHash.startsWith('$2a$') ||
-      trimmedHash.startsWith('$2b$') ||
-      trimmedHash.startsWith('$2y$')
-    ) {
-      try {
-        const isMatch = await bcrypt.compare(plainText, trimmedHash);
-        if (isMatch) return true;
-
-        // Fallback: Check if PHP double-hashed or md5-hashed before bcrypt
-        const md5OfPlain = crypto.createHash('md5').update(plainText).digest('hex');
-        const isMd5BcryptMatch = await bcrypt.compare(md5OfPlain, trimmedHash);
-        if (isMd5BcryptMatch) return true;
-      } catch (err) {
-        // Continue to legacy checks if bcrypt compare errors out
-      }
+    // 1. Direct Bcrypt comparison ($2b$, $2a$, $2y$)
+    try {
+      const isMatch = await bcrypt.compare(plainText, trimmedHash);
+      if (isMatch) return true;
+    } catch (err) {
+      // Continue to compatibility checks
     }
 
-    // 2. Legacy MD5 hash check (32 hex characters)
+    // 2. PHP $2y$ to Node.js $2a$ / $2b$ Bcrypt Compatibility Fix
+    // PHP password_hash produces $2y$, while some Node.js bcrypt libraries require $2a$ or $2b$
+    if (trimmedHash.startsWith('$2y$')) {
+      try {
+        const hash2a = trimmedHash.replace(/^\$2y\$/, '$2a$');
+        if (await bcrypt.compare(plainText, hash2a)) {
+          return true;
+        }
+      } catch (err) {}
+
+      try {
+        const hash2b = trimmedHash.replace(/^\$2y\$/, '$2b$');
+        if (await bcrypt.compare(plainText, hash2b)) {
+          return true;
+        }
+      } catch (err) {}
+    }
+
+    // 3. Check if input was MD5 hashed before Bcrypt (PHP custom login pattern)
+    const md5OfPlain = crypto.createHash('md5').update(plainText).digest('hex');
+    try {
+      if (await bcrypt.compare(md5OfPlain, trimmedHash)) return true;
+      if (trimmedHash.startsWith('$2y$')) {
+        if (await bcrypt.compare(md5OfPlain, trimmedHash.replace(/^\$2y\$/, '$2a$'))) return true;
+        if (await bcrypt.compare(md5OfPlain, trimmedHash.replace(/^\$2y\$/, '$2b$'))) return true;
+      }
+    } catch (err) {}
+
+    // 4. Legacy MD5 check (32 hex chars)
     if (trimmedHash.length === 32 && /^[a-fA-F0-9]{32}$/.test(trimmedHash)) {
-      const md5Hash = crypto.createHash('md5').update(plainText).digest('hex');
-      if (md5Hash.toLowerCase() === trimmedHash.toLowerCase()) {
+      if (md5OfPlain.toLowerCase() === trimmedHash.toLowerCase()) {
         return true;
       }
     }
 
-    // 3. Legacy SHA1 hash check (40 hex characters)
+    // 5. Legacy SHA1 check (40 hex chars)
     if (trimmedHash.length === 40 && /^[a-fA-F0-9]{40}$/.test(trimmedHash)) {
       const sha1Hash = crypto.createHash('sha1').update(plainText).digest('hex');
       if (sha1Hash.toLowerCase() === trimmedHash.toLowerCase()) {
@@ -51,7 +67,7 @@ export class EncryptionUtil {
       }
     }
 
-    // 4. Plaintext fallback (if legacy DB stored unhashed strings)
+    // 6. Plaintext fallback
     if (plainText === trimmedHash) {
       return true;
     }
