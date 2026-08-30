@@ -77,10 +77,10 @@ async function importData() {
       }
     }
 
-    // 2. Users
+    // 2. Users (Pass 1: Create all user accounts without self-referencing foreign keys)
     const users = getTableData('users');
     if (users.length > 0) {
-      console.log(`Importing ${users.length} users...`);
+      console.log(`Importing ${users.length} users (Pass 1: User Accounts)...`);
       for (const u of users) {
         await prisma.user.upsert({
           where: { id: Number(u.id) },
@@ -92,8 +92,8 @@ async function importData() {
             password_changed: Boolean(Number(u.password_changed)),
             role: u.role as any,
             department_id: u.department_id ? Number(u.department_id) : null,
-            reporting_manager_id: u.reporting_manager_id ? Number(u.reporting_manager_id) : null,
-            hod_id: u.hod_id ? Number(u.hod_id) : null,
+            reporting_manager_id: null,
+            hod_id: null,
             is_active: Boolean(Number(u.is_active)),
           },
           create: {
@@ -105,12 +105,25 @@ async function importData() {
             password_changed: Boolean(Number(u.password_changed)),
             role: u.role as any,
             department_id: u.department_id ? Number(u.department_id) : null,
-            reporting_manager_id: u.reporting_manager_id ? Number(u.reporting_manager_id) : null,
-            hod_id: u.hod_id ? Number(u.hod_id) : null,
+            reporting_manager_id: null,
+            hod_id: null,
             is_active: Boolean(Number(u.is_active)),
             created_at: u.created_at ? new Date(u.created_at) : new Date(),
           },
         });
+      }
+
+      console.log(`Linking user relations (Pass 2: Managers & HODs)...`);
+      for (const u of users) {
+        if (u.reporting_manager_id || u.hod_id) {
+          await prisma.user.update({
+            where: { id: Number(u.id) },
+            data: {
+              reporting_manager_id: u.reporting_manager_id ? Number(u.reporting_manager_id) : null,
+              hod_id: u.hod_id ? Number(u.hod_id) : null,
+            },
+          });
+        }
       }
     }
 
