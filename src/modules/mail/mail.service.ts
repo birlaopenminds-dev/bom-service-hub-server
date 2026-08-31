@@ -138,23 +138,38 @@ export class MailService {
   }
 
   private async renderTemplate(template: string, context: any): Promise<string> {
-    const paths = [this.templatePath, this.devTemplatePath];
+    const paths = [
+      this.templatePath,
+      this.devTemplatePath,
+      path.join(process.cwd(), 'dist', 'src', 'modules', 'mail', 'templates'),
+      path.join(process.cwd(), 'dist', 'modules', 'mail', 'templates'),
+      path.join(process.cwd(), 'src', 'modules', 'mail', 'templates'),
+      path.join(__dirname, 'templates'),
+    ];
 
     for (const basePath of paths) {
       const templatePath = path.join(basePath, `${template}.ejs`);
       try {
-        // Check if file exists
         await fs.promises.access(templatePath, fs.constants.F_OK);
-        return await ejs.renderFile(templatePath, context);
+        const rendered = await ejs.renderFile(templatePath, context);
+        return rendered;
       } catch (error) {
-        this.logger.debug(`Template not found at ${templatePath}, trying next path...`);
+        this.logger.debug(`Template check failed at ${templatePath}: ${error.message}`);
         continue;
       }
     }
 
-    // Fallback if template doesn't exist
-    this.logger.warn(`Template ${template} not found, using fallback HTML`);
-    return `<p>${context.subject || 'Email'}</p>`;
+    // Fallback if template doesn't exist or rendering throws
+    this.logger.warn(`Template ${template} not found or failed to render, using HTML fallback`);
+    return `
+      <div style="font-family: sans-serif; padding: 24px; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <h2 style="color: #0f172a;">BOM ServiceHub Notification</h2>
+        <p>Hello <strong>${context.name || 'User'}</strong>,</p>
+        <p>Your account password has been reset by an Administrator. Your login credentials are:</p>
+        <p><strong>Email:</strong> ${context.email || ''}<br/><strong>Default Password:</strong> ${context.defaultPassword || 'Welcome@123'}</p>
+        <p style="margin-top: 20px;"><a href="${context.loginUrl || 'https://tickets.birlaopenminds.com/login'}" style="background: #2563eb; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 6px;">Log In to ServiceHub Portal</a></p>
+      </div>
+    `;
   }
 
   private async createEmailLog(
