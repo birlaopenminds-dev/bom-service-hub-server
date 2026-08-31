@@ -4,11 +4,12 @@ import * as nodemailer from 'nodemailer';
 import * as ejs from 'ejs';
 import * as path from 'path';
 import { PrismaService } from '../../providers/database/prisma.service';
-import { EmailStatus } from '@prisma/client';
+import { Prisma, EmailStatus } from '@prisma/client';
 import { ISendEmailOptions } from './interfaces/email.interface';
 import * as fs from 'fs';
 
 import { DateUtil } from '../../common/utils/date.util';
+import { PaginationUtil } from '../../common/utils/pagination.util';
 
 @Injectable()
 export class MailService {
@@ -204,4 +205,51 @@ export class MailService {
     return emailRegex.test(email.trim());
   }
 
+  async getEmailLogs(query: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+  }) {
+    let page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+    const skip = (page - 1) * limit;
+
+    const filters: Prisma.EmailLogWhereInput[] = [];
+
+    const search = query.search?.trim();
+    if (search) {
+      filters.push({
+        OR: [
+          { recipient: { contains: search, mode: 'insensitive' } },
+          { subject: { contains: search, mode: 'insensitive' } },
+          { template: { contains: search, mode: 'insensitive' } },
+          { error: { contains: search, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    if (query.status && query.status.toUpperCase() !== 'ALL') {
+      const statusLower = query.status.toLowerCase();
+      if (statusLower === 'failed') {
+        filters.push({ status: EmailStatus.failed });
+      } else if (statusLower === 'sent') {
+        filters.push({ status: EmailStatus.sent });
+      }
+    }
+
+    const where: Prisma.EmailLogWhereInput = filters.length > 0 ? { AND: filters } : {};
+
+    const [logs, totalCount] = await Promise.all([
+      this.prisma.emailLog.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.emailLog.count({ where }),
+    ]);
+
+    return PaginationUtil.buildPaginatedResult(logs, totalCount, page, limit);
+  }
 }
