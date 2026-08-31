@@ -22,6 +22,8 @@ import { IUserPayload } from '../../common/interfaces/request.interface';
 import { Response } from 'express';
 import { UsersExporter } from './export/users.exporter';
 
+import { JwtService } from '@nestjs/jwt';
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -30,6 +32,7 @@ export class UsersService {
     private prisma: PrismaService,
     private mailService: MailService,
     private auditService: AuditService,
+    private jwtService: JwtService,
   ) { }
 
 
@@ -425,6 +428,58 @@ export class UsersService {
         : currentUser;
 
     return this.resetPassword(userId, dto, userPayload);
+  }
+
+  // Send Password Reset Link Email (Super Admin & Admin ONLY)
+  async sendResetLink(userId: number, currentUser: IUserPayload | number) {
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException(`User with ID ${userId} not found.`);
+    }
+
+    const defaultPassword = 'Welcome@123';
+    const defaultPasswordHash = await EncryptionUtil.hashPassword(defaultPassword);
+
+    // Update user password to default password & set password_changed = false
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        password_hash: defaultPasswordHash,
+        password_changed: false,
+      },
+    });
+
+    const rawAppUrl = process.env.APP_URL || 'https://tickets.birlaopenminds.com';
+    const cleanAppUrl = rawAppUrl.replace(/\/+$/, '');
+    const loginUrl = `${cleanAppUrl}/login`;
+
+    await this.mailService.sendMail({
+      to: targetUser.email,
+      subject: '[BOM Service Hub] Account Password Reset',
+      template: 'password-reset',
+      context: {
+        name: targetUser.name,
+        email: targetUser.email,
+        defaultPassword,
+        loginUrl,
+      },
+    });
+
+    const currentUserId = typeof currentUser === 'number' ? currentUser : currentUser.id;
+
+    await this.auditService.log({
+      userId: currentUserId,
+      action: 'SEND_RESET_PASSWORD_LINK',
+      resource: 'users',
+      resourceId: userId,
+    });
+
+    return {
+      message: `Password reset to default credentials (${defaultPassword}). Email notification sent to ${targetUser.email} successfully.`,
+    };
   }
 
   // Deactivate user account (Super Admin, Admin, and Manager/HOD of target user)

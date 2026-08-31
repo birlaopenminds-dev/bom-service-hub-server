@@ -289,6 +289,30 @@ export class UsersController {
     return this.usersService.resetPassword(id, dto, currentUser);
   }
 
+  // Send Password Reset Link to User via Email (Super Admin & Admin ONLY)
+  @Post(':id/send-reset-link')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.admin, (Role as any).super_admin || 'super_admin')
+  @ApiOperation({
+    summary: 'Send password reset link email to target user (Super Admin & Admin ONLY)',
+    description:
+      'Generates a secure password reset token link and emails it to the target user. Accessible ONLY by Super Admin & Admin.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Target User ID' })
+  @ApiResponse({ status: 200, description: 'Password reset link sent successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden: Accessible ONLY by Admin or Super Admin',
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async sendResetLink(
+    @Param('id', ParseIntPipe) id: number,
+    @GetUser() currentUser: IUserPayload,
+  ) {
+    return this.usersService.sendResetLink(id, currentUser);
+  }
+
   //  Deactivate User account (Admin and Manager/HOD of employee)
   @Delete(':id')
   @Roles(

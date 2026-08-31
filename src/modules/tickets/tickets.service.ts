@@ -978,13 +978,8 @@ export class TicketsService {
       );
     }
 
+    // Once created, ticket title (subject), description, department, priority, category, and subcategory are immutable.
     const updateData: any = {
-      ...(dto.department_id && { department_id: dto.department_id }),
-      ...(dto.category_id && { category_id: dto.category_id }),
-      ...(dto.subcategory_id && { subcategory_id: dto.subcategory_id }),
-      ...(dto.priority && { priority: dto.priority }),
-      ...(dto.subject && { subject: SanitizeUtil.sanitizeString(dto.subject) }),
-      ...(dto.description && { description: SanitizeUtil.sanitizeRichText(dto.description) }),
       ...(dto.assigned_to !== undefined && { assigned_to: dto.assigned_to }),
     };
 
