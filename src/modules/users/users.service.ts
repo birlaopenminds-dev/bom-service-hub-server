@@ -219,8 +219,6 @@ export class UsersService {
       select: this.getUserSelectFields(),
     });
 
-    console.log("users =====>>",users)
-
     return PaginationUtil.buildPaginatedResult(users, total, page, limit);
   }
 
