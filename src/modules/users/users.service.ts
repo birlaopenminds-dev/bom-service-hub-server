@@ -147,21 +147,22 @@ export class UsersService {
     }
 
     // Send Welcome Email asynchronously in background with default password
-    // this.mailService
-    //   .sendMail({
-    //     to: user.email,
-    //     subject: 'Welcome to BOM ServiceHub',
-    //     template: 'user-creation',
-    //     context: {
-    //       name: user.name,
-    //       email: user.email,
-    //       role: user.role,
-    //       password: createUserDto.password,
-    //     },
-    //   })
-    //   .catch((err) =>
-    //     this.logger.error(`Failed to send welcome email: ${err.message}`),
-    //   );
+    this.mailService
+      .sendMail({
+        to: user.email,
+        subject: 'Welcome to BOM ServiceHub',
+        template: 'user-creation',
+        context: {
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          password: createUserDto.password,
+          loginLink: `${process.env.CLIENT_URL}`,
+        },
+      })
+      .catch((err) =>
+        this.logger.error(`Failed to send welcome email: ${err.message}`),
+      );
 
     return user;
   }
