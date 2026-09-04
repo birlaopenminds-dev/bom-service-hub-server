@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class RequestResetPasswordDto {
   @ApiProperty({ example: 'user@bomservicehub.com' })
@@ -13,6 +13,11 @@ export class ConfirmResetPasswordDto {
   @IsString()
   @IsNotEmpty()
   token: string;
+
+  @ApiProperty({ example: '123456', required: false })
+  @IsString()
+  @IsOptional()
+  otp?: string;
 
   @ApiProperty({ example: 'NewSecurePass@2026' })
   @IsString()
