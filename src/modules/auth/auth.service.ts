@@ -285,44 +285,54 @@ export class AuthService {
   }
 
   async requestPasswordReset(dto: RequestResetPasswordDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+    const cleanEmail = dto.email ? dto.email.trim().toLowerCase() : '';
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: {
+          equals: cleanEmail,
+          mode: 'insensitive',
+        },
+      },
     });
 
     if (!user || !user.is_active) {
-      return { message: 'User not found or inactive. Please contact IT support.' };
+      throw new BadRequestException('User account not found or is inactive. Please contact IT support.');
     }
 
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
     const resetToken = this.jwtService.sign(
-      { sub: user.id, email: user.email, type: 'password_reset' },
+      { sub: user.id, email: user.email, otp: otpCode, type: 'password_reset' },
       {
         secret: this.configService.get('jwt.secret'),
         expiresIn: '15m',
       },
     );
 
-    // Send reset email (Disabled / Commented out)
-    /*
-    const isSent = await this.mailService.sendMail({
-      to: user.email,
-      subject: 'BOM ServiceHub - Reset Your Password',
-      template: 'password-reset',
-      context: {
-        name: user.name,
-        token: resetToken,
-        resetUrl: `http://localhost:3000/reset-password?token=${resetToken}`,
-        // resetUrl: `https://tickets.birlaopenminds.com/reset-password?token=${resetToken}`,
-      },
-    });
-
-    if (!isSent) {
-      throw new InternalServerErrorException(
-        'Failed to send password reset email. Please verify SMTP mail configuration/App Password.',
-      );
+    // TODO: Uncomment this after updating Modal UI.
+    // Send reset email with OTP
+    try {
+      await this.mailService.sendMail({
+        to: user.email,
+        subject: 'BOM ServiceHub - Password Reset Verification OTP',
+        template: 'password-reset-otp',
+        context: {
+          name: user.name,
+          email: user.email,
+          otpCode,
+        },
+      });
+    } catch (mailErr) {
+      this.logger.error(`Failed to send password reset email to ${user.email}: ${mailErr.message}`);
     }
-    */
 
-    return { message: 'Password reset request generated successfully.' };
+    console.log('OTP Code:', otpCode);
+    console.log('Reset Token:', resetToken);
+
+    return {
+      message: 'A 6-digit OTP code has been sent to your registered email address.',
+      resetToken,
+    };
   }
 
   async confirmPasswordReset(dto: ConfirmResetPasswordDto) {
@@ -332,11 +342,15 @@ export class AuthService {
         secret: this.configService.get('jwt.secret'),
       });
     } catch (err) {
-      throw new BadRequestException('Invalid or expired password reset token.');
+      throw new BadRequestException('Invalid or expired password reset session. Please request a new OTP.');
     }
 
     if (payload.type !== 'password_reset') {
       throw new BadRequestException('Invalid password reset token.');
+    }
+
+    if (dto.otp && String(dto.otp).trim() !== String(payload.otp)) {
+      throw new BadRequestException('Invalid 6-digit OTP code. Please check your email and try again.');
     }
 
     // Check if token has already been used/blacklisted
@@ -344,7 +358,7 @@ export class AuthService {
       where: { token: dto.token },
     });
 
-    if (isBlacklisted) throw new BadRequestException('This password reset token has already been used.');
+    if (isBlacklisted) throw new BadRequestException('This password reset session has already been used.');
 
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
@@ -380,7 +394,7 @@ export class AuthService {
       },
     });
 
-    return { message: 'Password reset completed successfully. Please log in.' };
+    return { message: 'Password reset completed successfully. Please log in with your new password.' };
   }
 
 }

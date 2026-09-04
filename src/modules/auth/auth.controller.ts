@@ -125,7 +125,6 @@ export class AuthController {
     return this.authService.changePassword(userId, dto);
   }
 
-  // TODO: testing need to be done
   // /api/v1/auth/request-reset-password
   @Post('request-reset-password')
   @HttpCode(HttpStatus.OK)
@@ -137,7 +136,6 @@ export class AuthController {
     return this.authService.requestPasswordReset(dto);
   }
 
-  // TODO: testing need to be done
   // /api/v1/auth/confirm-reset-password
   @Post('confirm-reset-password')
   @HttpCode(HttpStatus.OK)
