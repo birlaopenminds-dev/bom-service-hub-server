@@ -95,12 +95,13 @@ export class ReportsService {
     // Role-based visibility scoping: Admins and Super Admins see ALL tickets
     if (user && !isAdminOrSuperAdmin) {
       const managedUserIds = await this.getManagedUserIds(user);
+      const userHodDeptIds = user.role === Role.hod ? await this.getHodDepartmentIds(user) : [];
       conditions.push({
         OR: [
           { user_id: { in: managedUserIds } },
           { assigned_to: { in: managedUserIds } },
-          ...(user.role === Role.hod && user.department_id
-            ? [{ department_id: user.department_id }]
+          ...(user.role === Role.hod && userHodDeptIds.length > 0
+            ? [{ department_id: { in: userHodDeptIds } }]
             : []),
         ],
       });
@@ -178,20 +179,36 @@ export class ReportsService {
     );
   }
 
-  private async getManagedUserIds(user: any): Promise<number[]> {
-    if (!user || !user.id) return [];
-    const roleStr = String(user.role).toLowerCase().trim();
+  private async getHodDepartmentIds(user: any): Promise<number[]> {
+    const deptIdsSet = new Set<number>();
+    if (user?.department_id) deptIdsSet.add(user.department_id);
 
-    if (roleStr === 'user') {
-      return [user.id];
+    if (user?.hod_departments && Array.isArray(user.hod_departments)) {
+      user.hod_departments.forEach((d: any) => deptIdsSet.add(d.id));
+    } else if (user?.id) {
+      const dbUser = await this.prisma.user.findUnique({
+        where: { id: user.id },
+        select: { hod_departments: { select: { id: true } } },
+      });
+      if (dbUser?.hod_departments) {
+        dbUser.hod_departments.forEach((d) => deptIdsSet.add(d.id));
+      }
     }
+    return Array.from(deptIdsSet);
+  }
+
+  private async getManagedUserIds(user: any): Promise<number[]> {
+    if (!user) return [];
+
+    const roleStr = String(user.role).toLowerCase().trim();
 
     if (roleStr === 'manager') {
       const directReports = await this.prisma.user.findMany({
         where: {
           OR: [
-            { id: user.id },
             { reporting_manager_id: user.id },
+            { hod_id: user.id },
+            { id: user.id },
           ],
         },
         select: { id: true },
@@ -216,6 +233,7 @@ export class ReportsService {
     }
 
     if (roleStr === 'hod') {
+      const hodDeptIds = await this.getHodDepartmentIds(user);
       const whereCond: Prisma.UserWhereInput = {
         OR: [
           { id: user.id },
@@ -224,8 +242,8 @@ export class ReportsService {
         ],
       };
 
-      if (user.department_id) {
-        (whereCond.OR as any[]).push({ department_id: user.department_id });
+      if (hodDeptIds.length > 0) {
+        (whereCond.OR as any[]).push({ department_id: { in: hodDeptIds } });
       }
 
       const hodUsers = await this.prisma.user.findMany({
@@ -332,14 +350,15 @@ export class ReportsService {
       AND: [baseWhere, { user_id: { in: managedUserIds } }],
     };
 
+    const userHodDeptIds = user.role === Role.hod ? await this.getHodDepartmentIds(user) : [];
     const raisedOnMeBase: Prisma.TicketWhereInput = {
       AND: [
         baseWhere,
         {
           OR: [
             { assigned_to: { in: managedUserIds } },
-            ...(user.role === Role.hod && user.department_id
-              ? [{ department_id: user.department_id }]
+            ...(user.role === Role.hod && userHodDeptIds.length > 0
+              ? [{ department_id: { in: userHodDeptIds } }]
               : []),
           ],
         },

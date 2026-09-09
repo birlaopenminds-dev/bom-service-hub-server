@@ -66,7 +66,40 @@ export class TicketsService {
       },
     };
   }
+  private async getHodDepartmentIds(user: any): Promise<number[]> {
+    const deptIdsSet = new Set<number>();
+    if (user?.department_id) deptIdsSet.add(user.department_id);
 
+    if (user?.hod_departments && Array.isArray(user.hod_departments)) {
+      user.hod_departments.forEach((d: any) => deptIdsSet.add(d.id));
+    } else if (user?.id) {
+      const dbUser = await this.prisma.user.findUnique({
+        where: { id: user.id },
+        select: { hod_departments: { select: { id: true } } },
+      });
+      if (dbUser?.hod_departments) {
+        dbUser.hod_departments.forEach((d) => deptIdsSet.add(d.id));
+      }
+    }
+    return Array.from(deptIdsSet);
+  }
+
+  private async getHodEmailsForDepartment(departmentId: number): Promise<string[]> {
+    const hods = await this.prisma.user.findMany({
+      where: {
+        role: Role.hod,
+        is_active: true,
+        OR: [
+          { department_id: departmentId },
+          { hod_departments: { some: { id: departmentId } } },
+        ],
+      },
+      select: { email: true },
+    });
+    return hods.map((h) => h.email).filter((e): e is string => Boolean(e));
+  }
+
+  // Common Private Method: Helper to centralize sending rich HTML emails for ticket events
   private async sendNotificationWithCc(
     ticket: any,
     template: string,
@@ -79,22 +112,14 @@ export class TicketsService {
       const assignee = ticket.assignee;
 
       // 1. Fetch HOD emails for Creator's Department and Assignee's Department if direct hod relation is missing
-      let creatorHodEmail = creator?.hod?.email;
-      if (!creatorHodEmail && creator?.department_id) {
-        const deptHod = await this.prisma.user.findFirst({
-          where: { department_id: creator.department_id, role: Role.hod, is_active: true },
-          select: { email: true },
-        });
-        if (deptHod) creatorHodEmail = deptHod.email;
+      let creatorHodEmails: string[] = creator?.hod?.email ? [creator.hod.email] : [];
+      if (creatorHodEmails.length === 0 && creator?.department_id) {
+        creatorHodEmails = await this.getHodEmailsForDepartment(creator.department_id);
       }
 
-      let assigneeHodEmail = assignee?.hod?.email;
-      if (!assigneeHodEmail && assignee?.department_id) {
-        const deptHod = await this.prisma.user.findFirst({
-          where: { department_id: assignee.department_id, role: Role.hod, is_active: true },
-          select: { email: true },
-        });
-        if (deptHod) assigneeHodEmail = deptHod.email;
+      let assigneeHodEmails: string[] = assignee?.hod?.email ? [assignee.hod.email] : [];
+      if (assigneeHodEmails.length === 0 && assignee?.department_id) {
+        assigneeHodEmails = await this.getHodEmailsForDepartment(assignee.department_id);
       }
 
       // 2. Primary TO Recipients: Include Creator & Assignee ONLY
@@ -117,9 +142,9 @@ export class TicketsService {
       // 3. CC Recipients: RM and HOD of BOTH Creator and Assignee
       const ccCandidates: (string | undefined | null)[] = [
         creator?.reporting_manager?.email,
-        creatorHodEmail,
+        ...creatorHodEmails,
         assignee?.reporting_manager?.email,
-        assigneeHodEmail,
+        ...assigneeHodEmails,
       ];
 
       const ccEmailsSet = new Set<string>();
@@ -211,6 +236,7 @@ export class TicketsService {
     }
 
     if (roleStr === 'hod') {
+      const hodDeptIds = await this.getHodDepartmentIds(user);
       const whereCond: Prisma.UserWhereInput = {
         OR: [
           { id: user.id },
@@ -219,8 +245,8 @@ export class TicketsService {
         ],
       };
 
-      if (user.department_id) {
-        (whereCond.OR as any[]).push({ department_id: user.department_id });
+      if (hodDeptIds.length > 0) {
+        (whereCond.OR as any[]).push({ department_id: { in: hodDeptIds } });
       }
 
       const hodUsers = await this.prisma.user.findMany({
@@ -316,24 +342,20 @@ export class TicketsService {
         creatorCcEmails.push(rmEmail);
       }
     }
-    let creatorHodEmail = ticket.user?.hod?.email;
-    if (!creatorHodEmail && ticket.user?.department_id) {
-      const deptHod = await this.prisma.user.findFirst({
-        where: { department_id: ticket.user.department_id, role: Role.hod, is_active: true },
-        select: { email: true },
-      });
-      if (deptHod) creatorHodEmail = deptHod.email;
+    let creatorHodEmails: string[] = ticket.user?.hod?.email ? [ticket.user.hod.email] : [];
+    if (creatorHodEmails.length === 0 && ticket.user?.department_id) {
+      creatorHodEmails = await this.getHodEmailsForDepartment(ticket.user.department_id);
     }
-    if (creatorHodEmail) {
-      const hodEmail = creatorHodEmail.trim();
+    creatorHodEmails.forEach((hodEmail) => {
+      const trimmed = hodEmail.trim();
       if (
-        hodEmail &&
-        hodEmail.toLowerCase() !== ticket.user.email.toLowerCase() &&
-        !creatorCcEmails.some((e) => e.toLowerCase() === hodEmail.toLowerCase())
+        trimmed &&
+        trimmed.toLowerCase() !== ticket.user.email.toLowerCase() &&
+        !creatorCcEmails.some((e) => e.toLowerCase() === trimmed.toLowerCase())
       ) {
-        creatorCcEmails.push(hodEmail);
+        creatorCcEmails.push(trimmed);
       }
-    }
+    });
 
     const commonMailContext = {
       ticketNo: ticket.ticket_no,
@@ -376,17 +398,11 @@ export class TicketsService {
       if (ticket.assignee.reporting_manager?.email) {
         rawAssigneeCc.push(ticket.assignee.reporting_manager.email.trim());
       }
-      let assigneeHodEmail = ticket.assignee.hod?.email;
-      if (!assigneeHodEmail && ticket.assignee.department_id) {
-        const deptHod = await this.prisma.user.findFirst({
-          where: { department_id: ticket.assignee.department_id, role: Role.hod, is_active: true },
-          select: { email: true },
-        });
-        if (deptHod) assigneeHodEmail = deptHod.email;
+      let assigneeHodEmails: string[] = ticket.assignee.hod?.email ? [ticket.assignee.hod.email] : [];
+      if (assigneeHodEmails.length === 0 && ticket.assignee.department_id) {
+        assigneeHodEmails = await this.getHodEmailsForDepartment(ticket.assignee.department_id);
       }
-      if (assigneeHodEmail) {
-        rawAssigneeCc.push(assigneeHodEmail.trim());
-      }
+      assigneeHodEmails.forEach((email) => rawAssigneeCc.push(email.trim()));
 
       const creatorCcLowerSet = new Set(
         creatorCcEmails.map((e) => e.toLowerCase()),
@@ -449,6 +465,7 @@ export class TicketsService {
       }
     } else {
       const managedUserIds = await this.getManagedUserIds(user);
+      const userHodDeptIds = user.role === Role.hod ? await this.getHodDepartmentIds(user) : [];
 
       if (filterType === 'raised_by_me' || filterType === 'created_by_me') {
         filters.push({ user_id: { in: managedUserIds } });
@@ -458,8 +475,8 @@ export class TicketsService {
             {
               OR: [
                 { assigned_to: { in: managedUserIds } },
-                ...(user.role === Role.hod && user.department_id
-                  ? [{ department_id: user.department_id }]
+                ...(user.role === Role.hod && userHodDeptIds.length > 0
+                  ? [{ department_id: { in: userHodDeptIds } }]
                   : []),
               ],
             },
@@ -471,8 +488,8 @@ export class TicketsService {
           OR: [
             { user_id: { in: managedUserIds } },
             { assigned_to: { in: managedUserIds } },
-            ...(user.role === Role.hod && user.department_id
-              ? [{ department_id: user.department_id }]
+            ...(user.role === Role.hod && userHodDeptIds.length > 0
+              ? [{ department_id: { in: userHodDeptIds } }]
               : []),
           ],
         });
@@ -602,10 +619,11 @@ export class TicketsService {
         currentUser.role === Role.admin;
       if (!isAdminOrSuperAdmin) {
         const managedUserIds = await this.getManagedUserIds(currentUser);
+        const userHodDeptIds = currentUser.role === Role.hod ? await this.getHodDepartmentIds(currentUser) : [];
         const hasAccess =
           managedUserIds.includes(ticket.user_id) ||
           (ticket.assigned_to && managedUserIds.includes(ticket.assigned_to)) ||
-          (currentUser.role === Role.hod && ticket.department_id === currentUser.department_id);
+          (currentUser.role === Role.hod && userHodDeptIds.includes(ticket.department_id));
         if (!hasAccess) {
           throw new ForbiddenException("Access Restricted: You don't have permission to perform this action.");
         }

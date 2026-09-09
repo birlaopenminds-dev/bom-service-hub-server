@@ -178,18 +178,23 @@ export class EscalateDelayedTicketsJob {
     }
 
     // CC: Creator's HOD (with department fallback)
-    let creatorHodEmail = ticket.user?.hod?.email;
-    if (!creatorHodEmail && ticket.user?.department_id) {
-      const deptHod = await this.prisma.user.findFirst({
-        where: { department_id: ticket.user.department_id, role: Role.hod, is_active: true },
+    if (ticket.user?.hod?.email) {
+      rawCcList.push(ticket.user.hod.email.trim());
+    } else if (ticket.user?.department_id) {
+      const creatorDeptHods = await this.prisma.user.findMany({
+        where: {
+          role: Role.hod,
+          is_active: true,
+          OR: [
+            { department_id: ticket.user.department_id },
+            { hod_departments: { some: { id: ticket.user.department_id } } },
+          ],
+        },
         select: { email: true },
       });
-
-      if (deptHod) creatorHodEmail = deptHod.email;
-    }
-
-    if (creatorHodEmail) {
-      rawCcList.push(creatorHodEmail.trim());
+      creatorDeptHods.forEach((h) => {
+        if (h.email) rawCcList.push(h.email.trim());
+      });
     }
 
     // CC: Assignee's RM
@@ -198,18 +203,23 @@ export class EscalateDelayedTicketsJob {
     }
 
     // CC: Assignee's HOD (with department fallback)
-    let assigneeHodEmail = ticket.assignee?.hod?.email;
-    if (!assigneeHodEmail && ticket.assignee?.department_id) {
-      const deptHod = await this.prisma.user.findFirst({
-        where: { department_id: ticket.assignee.department_id, role: Role.hod, is_active: true },
+    if (ticket.assignee?.hod?.email) {
+      rawCcList.push(ticket.assignee.hod.email.trim());
+    } else if (ticket.assignee?.department_id) {
+      const assigneeDeptHods = await this.prisma.user.findMany({
+        where: {
+          role: Role.hod,
+          is_active: true,
+          OR: [
+            { department_id: ticket.assignee.department_id },
+            { hod_departments: { some: { id: ticket.assignee.department_id } } },
+          ],
+        },
         select: { email: true },
       });
-      
-      if (deptHod) assigneeHodEmail = deptHod.email;
-    }
-    
-    if (assigneeHodEmail) {
-      rawCcList.push(assigneeHodEmail.trim());
+      assigneeDeptHods.forEach((h) => {
+        if (h.email) rawCcList.push(h.email.trim());
+      });
     }
 
     // CC: Extra management escalation emails (Sandeep Pinto , Yatharth Gautam, Sarada Murli)
