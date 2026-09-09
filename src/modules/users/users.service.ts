@@ -119,6 +119,17 @@ export class UsersService {
 
     const password_hash = await EncryptionUtil.hashPassword(createUserDto.password);
 
+    const hodDeptIdsSet = new Set<number>();
+    if (createUserDto.hod_department_ids && Array.isArray(createUserDto.hod_department_ids)) {
+      createUserDto.hod_department_ids.forEach((id) => {
+        if (id && !isNaN(Number(id))) hodDeptIdsSet.add(Number(id));
+      });
+    }
+    if (createUserDto.role === Role.hod && createUserDto.department_id) {
+      hodDeptIdsSet.add(Number(createUserDto.department_id));
+    }
+    const hodDeptIds = Array.from(hodDeptIdsSet);
+
     const user = await this.prisma.user.create({
       data: {
         name: createUserDto.name,
@@ -131,6 +142,11 @@ export class UsersService {
         reporting_manager_id: createUserDto.reporting_manager_id || null,
         hod_id: createUserDto.hod_id || null,
         is_active: true,
+        ...(hodDeptIds.length > 0 && {
+          hod_departments: {
+            connect: hodDeptIds.map((id) => ({ id })),
+          },
+        }),
       },
       select: this.getUserSelectFields(),
     });
@@ -252,13 +268,17 @@ export class UsersService {
       const roleStr = String(currentUser.role).toLowerCase().trim();
 
       if (roleStr === 'hod') {
+        const userHodDeptIds: number[] = ((currentUser as any).hod_departments || []).map((d: any) => d.id);
+        if (currentUser.department_id && !userHodDeptIds.includes(currentUser.department_id)) {
+          userHodDeptIds.push(currentUser.department_id);
+        }
         const hodConditions: Prisma.UserWhereInput[] = [
           { id: currentUser.id },
           { hod_id: currentUser.id },
           { reporting_manager_id: currentUser.id },
         ];
-        if (currentUser.department_id) {
-          hodConditions.push({ department_id: currentUser.department_id });
+        if (userHodDeptIds.length > 0) {
+          hodConditions.push({ department_id: { in: userHodDeptIds } });
         }
         filters.push({ OR: hodConditions });
       } else if (roleStr === 'manager') {
@@ -296,6 +316,7 @@ export class UsersService {
         department_id: true,
         is_active: true,
         department: { select: { id: true, name: true } },
+        hod_departments: { select: { id: true, name: true } },
       },
       orderBy: { name: 'asc' },
     });
@@ -343,6 +364,29 @@ export class UsersService {
       if (emailTaken) throw new ConflictException('Email address is already in use.');
     }
 
+    const hodDeptIdsSet = new Set<number>();
+    let updateHodDepts = false;
+
+    if (updateUserDto.hod_department_ids !== undefined && Array.isArray(updateUserDto.hod_department_ids)) {
+      updateHodDepts = true;
+      updateUserDto.hod_department_ids.forEach((id) => {
+        if (id && !isNaN(Number(id))) hodDeptIdsSet.add(Number(id));
+      });
+    }
+
+    const effectiveRole = updateUserDto.role || existing.role;
+    const effectiveDeptId = updateUserDto.department_id !== undefined ? updateUserDto.department_id : existing.department_id;
+
+    if (effectiveRole === Role.hod && effectiveDeptId) {
+      if (updateUserDto.department_id !== undefined || updateUserDto.hod_department_ids !== undefined) {
+        updateHodDepts = true;
+        hodDeptIdsSet.add(Number(effectiveDeptId));
+      }
+    } else if (updateUserDto.role && updateUserDto.role !== Role.hod && existing.role === Role.hod) {
+      updateHodDepts = true;
+      hodDeptIdsSet.clear();
+    }
+
     const updated = await this.prisma.user.update({
       where: { id },
       data: {
@@ -361,6 +405,11 @@ export class UsersService {
         }),
         ...(updateUserDto.is_active !== undefined && {
           is_active: updateUserDto.is_active,
+        }),
+        ...(updateHodDepts && {
+          hod_departments: {
+            set: Array.from(hodDeptIdsSet).map((id) => ({ id })),
+          },
         }),
       },
       select: this.getUserSelectFields(),
@@ -713,6 +762,11 @@ export class UsersService {
             reporting_manager_id,
             hod_id,
             is_active: true,
+            ...(mappedRole === Role.hod && department_id && {
+              hod_departments: {
+                connect: [{ id: department_id }],
+              },
+            }),
           },
           select: this.getUserSelectFields(),
         });
@@ -809,6 +863,7 @@ export class UsersService {
       password_changed: true,
       created_at: true,
       department: { select: { id: true, name: true } },
+      hod_departments: { select: { id: true, name: true } },
       assigned_subcategories: {
         select: {
           id: true,

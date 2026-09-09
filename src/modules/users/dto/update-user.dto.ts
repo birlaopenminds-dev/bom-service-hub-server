@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsArray,
   IsBoolean,
   IsEmail,
   IsEnum,
@@ -7,7 +8,7 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { Role } from '@prisma/client';
 
 export class UpdateUserDto {
@@ -36,6 +37,17 @@ export class UpdateUserDto {
   @IsInt()
   @Type(() => Number)
   department_id?: number;
+
+  @ApiPropertyOptional({ example: [1, 2], description: 'Department IDs managed by HOD', type: [Number] })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) return value.map(Number);
+    if (typeof value === 'string') return value.split(',').map((v) => Number(v.trim())).filter((v) => !isNaN(v));
+    return value;
+  })
+  hod_department_ids?: number[];
 
   @ApiPropertyOptional({ example: 2, description: 'Reporting Manager User ID' })
   @IsOptional()

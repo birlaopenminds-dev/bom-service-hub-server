@@ -47,7 +47,8 @@ model Department {
   created_at DateTime @default(now())
 
   categories Category[]
-  users      User[]
+  users      User[]     @relation("UserDepartment")
+  hods       User[]     @relation("HodDepartments")
   tickets    Ticket[]
 }
 
@@ -99,7 +100,8 @@ model User {
   created_at           DateTime  @default(now())
   last_login_at        DateTime?
 
-  department             Department?        @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  department             Department?        @relation("UserDepartment", fields: [department_id], references: [id], onDelete: SetNull)
+  hod_departments        Department[]       @relation("HodDepartments")
   reporting_manager      User?              @relation("ReportingManager", fields: [reporting_manager_id], references: [id], onDelete: SetNull)
   subordinates           User[]             @relation("ReportingManager")
   hod                    User?              @relation("HOD", fields: [hod_id], references: [id], onDelete: SetNull)

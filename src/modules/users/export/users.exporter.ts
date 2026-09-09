@@ -50,7 +50,9 @@ export class UsersExporter {
         email: u.email || '—',
         mobile: u.mobile || '—',
         role: u.role ? String(u.role).toUpperCase() : '—',
-        department: u.department?.name || u.department_name || '—',
+        department: u.hod_departments && u.hod_departments.length > 0
+          ? u.hod_departments.map((d: any) => d.name).join(', ')
+          : u.department?.name || u.department_name || '—',
         reporting_manager: u.reporting_manager?.name || '—',
         hod: u.hod?.name || '—',
         status: u.is_active !== false ? 'Active' : 'Inactive',

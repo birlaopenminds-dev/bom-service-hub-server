@@ -3,7 +3,6 @@ import {
   UnauthorizedException,
   BadRequestException,
   NotFoundException,
-  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -309,7 +308,6 @@ export class AuthService {
       },
     );
 
-    // TODO: Uncomment this after updating Modal UI.
     // Send reset email with OTP
     try {
       await this.mailService.sendMail({
@@ -325,9 +323,6 @@ export class AuthService {
     } catch (mailErr) {
       this.logger.error(`Failed to send password reset email to ${user.email}: ${mailErr.message}`);
     }
-
-    console.log('OTP Code:', otpCode);
-    console.log('Reset Token:', resetToken);
 
     return {
       message: 'A 6-digit OTP code has been sent to your registered email address.',
