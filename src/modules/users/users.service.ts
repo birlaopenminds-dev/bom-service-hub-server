@@ -251,8 +251,12 @@ export class UsersService {
     const activeFilter = isActive !== undefined ? isActive : true;
     filters.push({ is_active: activeFilter });
 
-    if (role && (role as string) !== 'ALL') {
-      const normalizedRole = (role as string).toLowerCase().trim() as Role;
+    const normalizedRole =
+      role && (role as string) !== 'ALL'
+        ? ((role as string).toLowerCase().trim() as Role)
+        : undefined;
+
+    if (normalizedRole) {
       filters.push({ role: normalizedRole });
     } else {
       filters.push({
@@ -263,43 +267,29 @@ export class UsersService {
     }
 
     if (departmentId && !isNaN(departmentId)) {
-      filters.push({ department_id: departmentId });
+      if (normalizedRole === Role.hod) {
+        filters.push({
+          OR: [
+            { department_id: departmentId },
+            { hod_departments: { some: { id: departmentId } } },
+          ],
+        });
+      } else {
+        filters.push({ department_id: departmentId });
+      }
     } else if (currentUser && !this.isAdminOrSuperAdmin(currentUser.role)) {
       const roleStr = String(currentUser.role).toLowerCase().trim();
 
-      if (roleStr === 'hod') {
-        const userHodDeptIds: number[] = ((currentUser as any).hod_departments || []).map((d: any) => d.id);
-        if (currentUser.department_id && !userHodDeptIds.includes(currentUser.department_id)) {
-          userHodDeptIds.push(currentUser.department_id);
-        }
-        const hodConditions: Prisma.UserWhereInput[] = [
-          { id: currentUser.id },
-          { hod_id: currentUser.id },
-          { reporting_manager_id: currentUser.id },
-        ];
-        if (userHodDeptIds.length > 0) {
-          hodConditions.push({ department_id: { in: userHodDeptIds } });
-        }
-        filters.push({ OR: hodConditions });
-      } else if (roleStr === 'manager') {
-        // RM (Reporting Manager)
-        const rmConditions: Prisma.UserWhereInput[] = [
-          { id: currentUser.id },
-          { reporting_manager_id: currentUser.id },
-          { hod_id: currentUser.id },
-        ];
-        if (currentUser.department_id) {
-          rmConditions.push({ department_id: currentUser.department_id });
-        }
-        filters.push({ OR: rmConditions });
+      if (roleStr === 'hod' || roleStr === 'manager') {
+        filters.push({
+          OR: [
+            { hod_id: currentUser.id },
+            { reporting_manager_id: currentUser.id },
+          ],
+          NOT: { id: currentUser.id },
+        });
       } else {
-        const userConditions: Prisma.UserWhereInput[] = [
-          { id: currentUser.id },
-        ];
-        if (currentUser.department_id) {
-          userConditions.push({ department_id: currentUser.department_id });
-        }
-        filters.push({ OR: userConditions });
+        filters.push({ id: currentUser.id });
       }
     }
 
