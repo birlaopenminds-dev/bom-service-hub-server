@@ -26,6 +26,7 @@ import { MailModule } from './modules/mail/mail.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { CronModule } from './modules/cron/cron.module';
+import { HolidaysModule } from './modules/holidays/holidays.module';
 
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { DatabaseExceptionFilter } from './common/filters/database-exception.filter';
@@ -66,6 +67,7 @@ import { SecurityHeadersMiddleware } from './common/middleware/security-headers.
     ReportsModule,
     UploadsModule,
     CronModule,
+    HolidaysModule,
   ],
   controllers: [AppController],
   providers: [

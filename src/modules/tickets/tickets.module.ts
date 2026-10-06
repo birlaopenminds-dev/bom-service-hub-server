@@ -6,6 +6,7 @@ import { TicketLogsModule } from '../ticket-logs/ticket-logs.module';
 import { TicketAttachmentsModule } from '../ticket-attachments/ticket-attachments.module';
 import { MailModule } from '../mail/mail.module';
 import { AuditModule } from '../audit/audit.module';
+import { HolidaysModule } from '../holidays/holidays.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AuditModule } from '../audit/audit.module';
     TicketAttachmentsModule,
     MailModule,
     AuditModule,
+    HolidaysModule,
   ],
   controllers: [TicketsController],
   providers: [TicketsService],

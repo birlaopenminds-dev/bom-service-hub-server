@@ -4,6 +4,7 @@ import { MailService } from '../../mail/mail.service';
 import { TicketLogsService } from '../../ticket-logs/ticket-logs.service';
 import { TicketStatus, Role } from '@prisma/client';
 import { DateUtil } from '../../../common/utils/date.util';
+import { HolidaysService } from '../../holidays/holidays.service';
 
 @Injectable()
 export class EscalateDelayedTicketsJob {
@@ -13,6 +14,7 @@ export class EscalateDelayedTicketsJob {
     private prisma: PrismaService,
     private mailService: MailService,
     private ticketLogsService: TicketLogsService,
+    private holidaysService: HolidaysService,
   ) { }
 
   async execute() {
@@ -23,9 +25,9 @@ export class EscalateDelayedTicketsJob {
     let countStage2 = 0;
     let countStage3 = 0;
 
-    // ----------------------------------------------------------------------
-    // STAGE 1: Initial SLA Breach (due_at < now AND escalated_at IS NULL)
-    // ----------------------------------------------------------------------
+    // Note: Because ticket.due_at is calculated using HolidaysService,
+    // it already accounts for weekends (Sat/Sun) and company holidays.
+    // Therefore, tickets will only breach after all non-working days have elapsed.
     const overdueTickets = await this.prisma.ticket.findMany({
       where: {
         due_at: { lt: now },
@@ -61,13 +63,11 @@ export class EscalateDelayedTicketsJob {
     }
 
     // ----------------------------------------------------------------------
-    // STAGE 2: 48 Hours Past Escalation Notice (escalated_at <= now - 48h)
+    // STAGE 2: 48 Hours Past Escalation Notice (escalated_at <= now - 48h excluding working days)
     // ----------------------------------------------------------------------
-    const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-
-    const stage2Candidates = await this.prisma.ticket.findMany({
+    const activeEscalatedTickets = await this.prisma.ticket.findMany({
       where: {
-        escalated_at: { lte: fortyEightHoursAgo },
+        escalated_at: { not: null },
         NOT: { status: { in: [TicketStatus.resolved, TicketStatus.closed] } },
       },
       include: {
@@ -79,56 +79,49 @@ export class EscalateDelayedTicketsJob {
         },
         department: true,
         logs: {
-          where: { action: 'ESCALATED_48H_NOTICE' },
+          where: { action: { in: ['ESCALATED_48H_NOTICE', 'ESCALATED_72H_NOTICE'] } },
         },
       },
     });
 
-    for (const ticket of stage2Candidates) {
-      if (ticket.logs.length === 0) {
+    for (const ticket of activeEscalatedTickets) {
+      if (!ticket.escalated_at) continue;
+
+      const hasStage2Log = ticket.logs.some((l) => l.action === 'ESCALATED_48H_NOTICE');
+      const hasStage3Log = ticket.logs.some((l) => l.action === 'ESCALATED_72H_NOTICE');
+
+      // Calculate working deadlines based on escalated_at
+      const stage2Deadline = this.holidaysService.addWorkingHours(ticket.escalated_at, 48);
+      const stage3Deadline = this.holidaysService.addWorkingHours(ticket.escalated_at, 72);
+
+      // STAGE 2: 48 working hours elapsed
+      if (!hasStage2Log && now >= stage2Deadline) {
         await this.ticketLogsService.createLog({
           ticket_id: ticket.id,
           user_id: ticket.user_id,
           action: 'ESCALATED_48H_NOTICE',
-          details: { escalated_at: ticket.escalated_at, notice_sent_at: now },
+          details: {
+            escalated_at: ticket.escalated_at,
+            notice_sent_at: now,
+            working_deadline: stage2Deadline,
+          },
         });
 
         await this.sendEscalationEmail(ticket, 'stage2', ['sandeep.pinto@birlaopenminds.com']);
         countStage2++;
       }
-    }
 
-    // ----------------------------------------------------------------------
-    // STAGE 3: 72 Hours Past Escalation Notice (escalated_at <= now - 72h)
-    // ----------------------------------------------------------------------
-    const seventyTwoHoursAgo = new Date(now.getTime() - 72 * 60 * 60 * 1000);
-
-    const stage3Candidates = await this.prisma.ticket.findMany({
-      where: {
-        escalated_at: { lte: seventyTwoHoursAgo },
-        NOT: { status: { in: [TicketStatus.resolved, TicketStatus.closed] } },
-      },
-      include: {
-        user: {
-          include: { reporting_manager: true, hod: true },
-        },
-        assignee: {
-          include: { reporting_manager: true, hod: true },
-        },
-        department: true,
-        logs: {
-          where: { action: 'ESCALATED_72H_NOTICE' },
-        },
-      },
-    });
-
-    for (const ticket of stage3Candidates) {
-      if (ticket.logs.length === 0) {
+      // STAGE 3: 72 working hours elapsed
+      if (!hasStage3Log && now >= stage3Deadline) {
         await this.ticketLogsService.createLog({
           ticket_id: ticket.id,
           user_id: ticket.user_id,
           action: 'ESCALATED_72H_NOTICE',
-          details: { escalated_at: ticket.escalated_at, notice_sent_at: now },
+          details: {
+            escalated_at: ticket.escalated_at,
+            notice_sent_at: now,
+            working_deadline: stage3Deadline,
+          },
         });
 
         await this.sendEscalationEmail(ticket, 'stage3', [
@@ -141,7 +134,7 @@ export class EscalateDelayedTicketsJob {
     }
 
     this.logger.log(
-      `EscalateDelayedTicketsJob completed. Stage1: ${countStage1}, Stage2 (48h): ${countStage2}, Stage3 (72h): ${countStage3}`,
+      `EscalateDelayedTicketsJob completed. Stage1: ${countStage1}, Stage2 (48h working): ${countStage2}, Stage3 (72h working): ${countStage3}`,
     );
 
     return {
