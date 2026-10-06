@@ -24,6 +24,7 @@ import { EscalateTicketDto } from './dto/escalate-ticket.dto';
 import { AddCommentDto } from './dto/add-comment.dto';
 import { ListTicketsDto } from './dto/list-tickets.dto';
 import { Prisma, Role, TicketStatus } from '@prisma/client';
+import { HolidaysService } from '../holidays/holidays.service';
 
 @Injectable()
 export class TicketsService {
@@ -35,6 +36,7 @@ export class TicketsService {
     private ticketAttachmentsService: TicketAttachmentsService,
     private mailService: MailService,
     private auditService: AuditService,
+    private holidaysService: HolidaysService,
   ) { }
 
   private getTicketIncludeRelations() {
@@ -274,7 +276,11 @@ export class TicketsService {
 
     const assignedTo = createDto.assigned_to || subcategory.default_assignee_id || null;
 
-    const dueAt = HelpersUtil.calculateDueDate(subcategory.tat_hours);
+    // Calculate SLA due date excluding weekends (Sat/Sun) and public/company holidays (e.g. Gandhi Jayanti, Diwali)
+    const dueAt = this.holidaysService.calculateSlaDueDate(
+      new Date(),
+      subcategory.tat_hours,
+    );
 
     // Generate sequential ticket_no: TKT-0000001, TKT-0000002...
     const lastTicket = await this.prisma.ticket.findFirst({

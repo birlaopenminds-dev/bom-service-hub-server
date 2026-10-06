@@ -218,3 +218,16 @@ model EmailLog {
   sent_at    DateTime    @default(now())
   created_at DateTime    @default(now())
 }
+
+model Holiday {
+  id         Int      @id @default(autoincrement())
+  name       String
+  date       DateTime @db.Date
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@unique([date])
+  @@index([date])
+}
+

@@ -8,9 +8,10 @@ import { SendRemindersJob } from './jobs/send-reminders.job';
 import { DatabaseModule } from '../../providers/database/database.provider';
 import { MailModule } from '../mail/mail.module';
 import { TicketLogsModule } from '../ticket-logs/ticket-logs.module';
+import { HolidaysModule } from '../holidays/holidays.module';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), DatabaseModule, MailModule, TicketLogsModule],
+  imports: [ScheduleModule.forRoot(), DatabaseModule, MailModule, TicketLogsModule, HolidaysModule],
   providers: [
     CronService,
     EscalateDelayedTicketsJob,
