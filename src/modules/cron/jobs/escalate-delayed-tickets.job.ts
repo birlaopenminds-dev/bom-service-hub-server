@@ -4,6 +4,7 @@ import { MailService } from '../../mail/mail.service';
 import { TicketLogsService } from '../../ticket-logs/ticket-logs.service';
 import { TicketStatus, Role } from '@prisma/client';
 import { DateUtil } from '../../../common/utils/date.util';
+import { HierarchyUtil } from '../../../common/utils/hierarchy.util';
 import { HolidaysService } from '../../holidays/holidays.service';
 
 @Injectable()
@@ -151,7 +152,6 @@ export class EscalateDelayedTicketsJob {
     extraCcEmails?: string[],
   ) {
     const toList: string[] = [];
-    const rawCcList: string[] = [];
 
     // TO: Ticket Creator
     if (ticket.user?.email) {
@@ -165,72 +165,37 @@ export class EscalateDelayedTicketsJob {
 
     if (toList.length === 0) return;
 
-    // CC: Creator's RM
-    if (ticket.user?.reporting_manager?.email) {
-      rawCcList.push(ticket.user.reporting_manager.email.trim());
-    }
+    const uniqueTo = Array.from(new Set(toList));
 
-    // CC: Creator's HOD (with department fallback)
-    if (ticket.user?.hod?.email) {
-      rawCcList.push(ticket.user.hod.email.trim());
-    } else if (ticket.user?.department_id) {
-      const creatorDeptHods = await this.prisma.user.findMany({
-        where: {
-          role: Role.hod,
-          is_active: true,
-          OR: [
-            { department_id: ticket.user.department_id },
-            { hod_departments: { some: { id: ticket.user.department_id } } },
-          ],
-        },
-        select: { email: true },
-      });
-      creatorDeptHods.forEach((h) => {
-        if (h.email) rawCcList.push(h.email.trim());
-      });
-    }
+    // CC: Full management hierarchy (RM, RM's RM, ...) and HODs of Creator & Assignee
+    const creatorCc = await HierarchyUtil.getManagementChainCcEmails(
+      this.prisma,
+      ticket.user,
+      uniqueTo,
+    );
 
-    // CC: Assignee's RM
-    if (ticket.assignee?.reporting_manager?.email) {
-      rawCcList.push(ticket.assignee.reporting_manager.email.trim());
-    }
+    const assigneeCc = await HierarchyUtil.getManagementChainCcEmails(
+      this.prisma,
+      ticket.assignee,
+      [...uniqueTo, ...creatorCc],
+    );
 
-    // CC: Assignee's HOD (with department fallback)
-    if (ticket.assignee?.hod?.email) {
-      rawCcList.push(ticket.assignee.hod.email.trim());
-    } else if (ticket.assignee?.department_id) {
-      const assigneeDeptHods = await this.prisma.user.findMany({
-        where: {
-          role: Role.hod,
-          is_active: true,
-          OR: [
-            { department_id: ticket.assignee.department_id },
-            { hod_departments: { some: { id: ticket.assignee.department_id } } },
-          ],
-        },
-        select: { email: true },
-      });
-      assigneeDeptHods.forEach((h) => {
-        if (h.email) rawCcList.push(h.email.trim());
-      });
-    }
+    const rawCcList: string[] = [...creatorCc, ...assigneeCc];
 
     // CC: Extra management escalation emails (Sandeep Pinto , Yatharth Gautam, Sarada Murli)
     if (extraCcEmails && extraCcEmails.length > 0) {
-      rawCcList.push(...extraCcEmails);
+      for (const email of extraCcEmails) {
+        if (
+          email &&
+          !uniqueTo.some((to) => to.toLowerCase() === email.trim().toLowerCase()) &&
+          !rawCcList.some((cc) => cc.toLowerCase() === email.trim().toLowerCase())
+        ) {
+          rawCcList.push(email.trim());
+        }
+      }
     }
 
-    // Deduplicate lists
-    const uniqueTo = Array.from(new Set(toList));
-    const toLowerSet = new Set(uniqueTo.map((e) => e.toLowerCase()));
-
-    const uniqueCc = Array.from(
-      new Set(
-        rawCcList
-          .map((e) => e.trim())
-          .filter((email) => email && !toLowerSet.has(email.toLowerCase())),
-      ),
-    );
+    const uniqueCc = rawCcList;
 
     let subjectPrefix = '[SLA BREACH - ESCALATED]';
     if (stage === 'stage2') {
