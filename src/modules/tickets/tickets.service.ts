@@ -11,6 +11,7 @@ import { TicketAttachmentsService } from '../ticket-attachments/ticket-attachmen
 import { MailService } from '../mail/mail.service';
 import { AuditService } from '../audit/audit.service';
 import { HelpersUtil } from '../../common/utils/helpers.util';
+import { HierarchyUtil } from '../../common/utils/hierarchy.util';
 import { SanitizeUtil } from '../../common/utils/sanitize.util';
 import { ValidatorsUtil } from '../../common/utils/validators.util';
 import { PaginationUtil } from '../../common/utils/pagination.util';
@@ -113,18 +114,7 @@ export class TicketsService {
       const creator = ticket.user;
       const assignee = ticket.assignee;
 
-      // 1. Fetch HOD emails for Creator's Department and Assignee's Department if direct hod relation is missing
-      let creatorHodEmails: string[] = creator?.hod?.email ? [creator.hod.email] : [];
-      if (creatorHodEmails.length === 0 && creator?.department_id) {
-        creatorHodEmails = await this.getHodEmailsForDepartment(creator.department_id);
-      }
-
-      let assigneeHodEmails: string[] = assignee?.hod?.email ? [assignee.hod.email] : [];
-      if (assigneeHodEmails.length === 0 && assignee?.department_id) {
-        assigneeHodEmails = await this.getHodEmailsForDepartment(assignee.department_id);
-      }
-
-      // 2. Primary TO Recipients: Include Creator & Assignee ONLY
+      // 1. Primary TO Recipients: Include Creator & Assignee ONLY
       const toEmailsSet = new Set<string>();
       if (creator?.email && ValidatorsUtil.isValidEmail(creator.email.trim())) {
         toEmailsSet.add(creator.email.trim());
@@ -139,30 +129,20 @@ export class TicketsService {
         return;
       }
 
-      const toLowerSet = new Set(toEmails.map((e) => e.toLowerCase()));
+      // 2. CC Recipients: Full reporting manager hierarchy (RM, RM's RM, ...) and HODs of BOTH Creator and Assignee
+      const creatorCc = await HierarchyUtil.getManagementChainCcEmails(
+        this.prisma,
+        creator,
+        toEmails,
+      );
 
-      // 3. CC Recipients: RM and HOD of BOTH Creator and Assignee
-      const ccCandidates: (string | undefined | null)[] = [
-        creator?.reporting_manager?.email,
-        ...creatorHodEmails,
-        assignee?.reporting_manager?.email,
-        ...assigneeHodEmails,
-      ];
+      const assigneeCc = await HierarchyUtil.getManagementChainCcEmails(
+        this.prisma,
+        assignee,
+        [...toEmails, ...creatorCc],
+      );
 
-      const ccEmailsSet = new Set<string>();
-      for (const rawEmail of ccCandidates) {
-        if (rawEmail) {
-          const cleanEmail = rawEmail.trim();
-          if (
-            ValidatorsUtil.isValidEmail(cleanEmail) &&
-            !toLowerSet.has(cleanEmail.toLowerCase())
-          ) {
-            ccEmailsSet.add(cleanEmail);
-          }
-        }
-      }
-
-      const ccEmails = Array.from(ccEmailsSet);
+      const ccEmails = [...creatorCc, ...assigneeCc];
 
       const commonContext = {
         ticketNo: ticket.ticket_no,
@@ -340,28 +320,12 @@ export class TicketsService {
       newValues: { ticket_no: ticket.ticket_no, priority: ticket.priority },
     });
 
-    // 1. Gather CC Emails for Creator Confirmation Email (Creator's RM & HOD)
-    const creatorCcEmails: string[] = [];
-    if (ticket.user?.reporting_manager?.email) {
-      const rmEmail = ticket.user.reporting_manager.email.trim();
-      if (rmEmail && rmEmail.toLowerCase() !== ticket.user.email.toLowerCase()) {
-        creatorCcEmails.push(rmEmail);
-      }
-    }
-    let creatorHodEmails: string[] = ticket.user?.hod?.email ? [ticket.user.hod.email] : [];
-    if (creatorHodEmails.length === 0 && ticket.user?.department_id) {
-      creatorHodEmails = await this.getHodEmailsForDepartment(ticket.user.department_id);
-    }
-    creatorHodEmails.forEach((hodEmail) => {
-      const trimmed = hodEmail.trim();
-      if (
-        trimmed &&
-        trimmed.toLowerCase() !== ticket.user.email.toLowerCase() &&
-        !creatorCcEmails.some((e) => e.toLowerCase() === trimmed.toLowerCase())
-      ) {
-        creatorCcEmails.push(trimmed);
-      }
-    });
+    // 1. Gather CC Emails for Creator Confirmation Email (Creator's full RM hierarchy & HOD)
+    const creatorCcEmails = await HierarchyUtil.getManagementChainCcEmails(
+      this.prisma,
+      ticket.user,
+      [ticket.user.email],
+    );
 
     const commonMailContext = {
       ticketNo: ticket.ticket_no,
@@ -376,7 +340,7 @@ export class TicketsService {
       dueAt: ticket.due_at,
     };
 
-    // 1a. Send confirmation email to ticket creator (TO: Creator, CC: Creator's RM & HOD)
+    // 1a. Send confirmation email to ticket creator (TO: Creator, CC: Creator's RM hierarchy & HOD)
     this.mailService
       .sendMail({
         to: ticket.user.email,
@@ -399,31 +363,10 @@ export class TicketsService {
       ticket.assignee.email &&
       ticket.assignee.id !== ticket.user.id
     ) {
-      const rawAssigneeCc: string[] = [];
-
-      if (ticket.assignee.reporting_manager?.email) {
-        rawAssigneeCc.push(ticket.assignee.reporting_manager.email.trim());
-      }
-      let assigneeHodEmails: string[] = ticket.assignee.hod?.email ? [ticket.assignee.hod.email] : [];
-      if (assigneeHodEmails.length === 0 && ticket.assignee.department_id) {
-        assigneeHodEmails = await this.getHodEmailsForDepartment(ticket.assignee.department_id);
-      }
-      assigneeHodEmails.forEach((email) => rawAssigneeCc.push(email.trim()));
-
-      const creatorCcLowerSet = new Set(
-        creatorCcEmails.map((e) => e.toLowerCase()),
-      );
-      creatorCcLowerSet.add(ticket.user.email.toLowerCase());
-
-      const assigneeCcList = Array.from(
-        new Set(
-          rawAssigneeCc.filter(
-            (email) =>
-              email &&
-              email.toLowerCase() !== ticket.assignee.email.toLowerCase() &&
-              !creatorCcLowerSet.has(email.toLowerCase()),
-          ),
-        ),
+      const assigneeCcList = await HierarchyUtil.getManagementChainCcEmails(
+        this.prisma,
+        ticket.assignee,
+        [ticket.assignee.email, ticket.user.email, ...creatorCcEmails],
       );
 
       // Send notification email to Assignee (TO: Assignee, CC: Assignee's RM & HOD)
