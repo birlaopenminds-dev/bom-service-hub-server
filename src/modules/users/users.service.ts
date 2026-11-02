@@ -12,6 +12,7 @@ import { AuditService } from '../audit/audit.service';
 import { EncryptionUtil } from '../../common/utils/encryption.util';
 import { ValidatorsUtil } from '../../common/utils/validators.util';
 import { PaginationUtil } from '../../common/utils/pagination.util';
+import { HierarchyUtil } from '../../common/utils/hierarchy.util';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ListUsersDto } from './dto/list-users.dto';
@@ -85,10 +86,18 @@ export class UsersService {
       );
     }
 
-    // 3. Check if requester is reporting manager or HOD of target user
-    const isManagerOrHod =
+    // 3. Check if requester is reporting manager or HOD of target user (direct or indirect in hierarchy)
+    let isManagerOrHod =
       targetUser.reporting_manager_id === currentUserId ||
       targetUser.hod_id === currentUserId;
+
+    if (!isManagerOrHod) {
+      isManagerOrHod = await HierarchyUtil.isManagerAboveUser(
+        this.prisma,
+        targetUserId,
+        currentUserId,
+      );
+    }
 
     if (!isManagerOrHod) {
       throw new ForbiddenException(
@@ -281,10 +290,16 @@ export class UsersService {
       const roleStr = String(currentUser.role).toLowerCase().trim();
 
       if (roleStr === 'hod' || roleStr === 'manager') {
+        const subordinateIds = await HierarchyUtil.getSubordinateUserIds(
+          this.prisma,
+          currentUser.id,
+        );
+
         filters.push({
           OR: [
             { hod_id: currentUser.id },
             { reporting_manager_id: currentUser.id },
+            ...(subordinateIds.length > 0 ? [{ id: { in: subordinateIds } }] : []),
           ],
           NOT: { id: currentUser.id },
         });

@@ -5,6 +5,7 @@ import { ExcelExporter } from './export/excel-exporter';
 import { CsvExporter } from './export/csv-exporter';
 import { Response } from 'express';
 import { Prisma, Role, TicketStatus, Priority } from '@prisma/client';
+import { HierarchyUtil } from '../../common/utils/hierarchy.util';
 
 export function isTicketDelayed(t: any): boolean {
   const now = new Date();
@@ -198,25 +199,22 @@ export class ReportsService {
   }
 
   private async getManagedUserIds(user: any): Promise<number[]> {
-    if (!user) return [];
+    if (!user || !user.id) return [];
 
     const roleStr = String(user.role).toLowerCase().trim();
 
+    // 1. Traverse downwards through the entire reporting hierarchy
+    // to include all direct and indirect subordinates (e.g. emp3 -> emp2 -> emp1)
+    const subordinateIds = await HierarchyUtil.getSubordinateUserIds(
+      this.prisma,
+      user.id,
+    );
+
+    const managedIdsSet = new Set<number>([user.id, ...subordinateIds]);
+
     if (roleStr === 'manager') {
-      const directReports = await this.prisma.user.findMany({
-        where: {
-          OR: [
-            { reporting_manager_id: user.id },
-            { hod_id: user.id },
-            { id: user.id },
-          ],
-        },
-        select: { id: true },
-      });
-
-      const userIds = directReports.map((u) => u.id);
-
-      if (userIds.length <= 1 && user.department_id) {
+      // If manager has no direct or indirect reporting subordinates, fallback to department users with role 'user'
+      if (subordinateIds.length === 0 && user.department_id) {
         const deptUsers = await this.prisma.user.findMany({
           where: {
             department_id: user.department_id,
@@ -224,12 +222,10 @@ export class ReportsService {
           },
           select: { id: true },
         });
-        deptUsers.forEach((u) => {
-          if (!userIds.includes(u.id)) userIds.push(u.id);
-        });
+        deptUsers.forEach((u) => managedIdsSet.add(u.id));
       }
 
-      return userIds;
+      return Array.from(managedIdsSet);
     }
 
     if (roleStr === 'hod') {
@@ -251,10 +247,21 @@ export class ReportsService {
         select: { id: true },
       });
 
-      return hodUsers.map((u) => u.id);
+      hodUsers.forEach((u) => managedIdsSet.add(u.id));
+
+      // Also include any indirect subordinates under users in HOD scope
+      const deptUserIds = hodUsers.map((u) => u.id);
+      const deptSubordinateIds = await HierarchyUtil.getSubordinateUserIds(
+        this.prisma,
+        deptUserIds,
+      );
+      deptSubordinateIds.forEach((id) => managedIdsSet.add(id));
+
+      return Array.from(managedIdsSet);
     }
 
-    return [user.id];
+    // Role 'user' or any other role: includes user themselves plus any subordinates reporting under them
+    return Array.from(managedIdsSet);
   }
 
   async getSummaryMetrics(user: any, filters: ReportFiltersDto) {

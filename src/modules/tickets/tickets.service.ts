@@ -87,6 +87,52 @@ export class TicketsService {
     return Array.from(deptIdsSet);
   }
 
+  computeCanReassign(
+    ticket: any,
+    user?: any,
+    managedIdsSet?: Set<number>,
+    userHodDeptSet?: Set<number>,
+  ): boolean {
+    if (!user) return false;
+    const roleStr = String(user.role || '').toLowerCase().trim();
+    if (roleStr === 'super_admin' || roleStr === 'admin') {
+      return true;
+    }
+
+    const userId = Number(user.id);
+    const creator = ticket.user;
+    const assignee = ticket.assignee;
+
+    // Direct RM or HOD
+    if (
+      (creator?.reporting_manager_id && Number(creator.reporting_manager_id) === userId) ||
+      (creator?.hod_id && Number(creator.hod_id) === userId) ||
+      (assignee?.reporting_manager_id && Number(assignee.reporting_manager_id) === userId) ||
+      (assignee?.hod_id && Number(assignee.hod_id) === userId)
+    ) {
+      return true;
+    }
+
+    // Top-level manager or HOD:
+    if (roleStr === 'manager' || roleStr === 'hod') {
+      if (
+        managedIdsSet &&
+        (managedIdsSet.has(ticket.user_id) ||
+          (ticket.assigned_to && managedIdsSet.has(ticket.assigned_to)))
+      ) {
+        return true;
+      }
+      if (userHodDeptSet && userHodDeptSet.has(ticket.department_id)) {
+        return true;
+      }
+      if (user.department_id && Number(user.department_id) === Number(ticket.department_id)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private async getHodEmailsForDepartment(departmentId: number): Promise<string[]> {
     const hods = await this.prisma.user.findMany({
       where: {
@@ -185,23 +231,18 @@ export class TicketsService {
     if (!user || !user.id) return [];
     const roleStr = String(user.role).toLowerCase().trim();
 
-    if (roleStr === 'user') return [user.id];
+    // 1. Traverse downwards through the entire reporting hierarchy
+    // to include all direct and indirect subordinates (e.g. emp3 -> emp2 -> emp1)
+    const subordinateIds = await HierarchyUtil.getSubordinateUserIds(
+      this.prisma,
+      user.id,
+    );
 
+    const managedIdsSet = new Set<number>([user.id, ...subordinateIds]);
 
     if (roleStr === 'manager') {
-      const directReports = await this.prisma.user.findMany({
-        where: {
-          OR: [
-            { id: user.id },
-            { reporting_manager_id: user.id },
-          ],
-        },
-        select: { id: true },
-      });
-
-      const userIds = directReports.map((u) => u.id);
-
-      if (userIds.length <= 1 && user.department_id) {
+      // If manager has no direct or indirect reporting subordinates, fallback to department users with role 'user'
+      if (subordinateIds.length === 0 && user.department_id) {
         const deptUsers = await this.prisma.user.findMany({
           where: {
             department_id: user.department_id,
@@ -209,12 +250,10 @@ export class TicketsService {
           },
           select: { id: true },
         });
-        deptUsers.forEach((u) => {
-          if (!userIds.includes(u.id)) userIds.push(u.id);
-        });
+        deptUsers.forEach((u) => managedIdsSet.add(u.id));
       }
 
-      return userIds;
+      return Array.from(managedIdsSet);
     }
 
     if (roleStr === 'hod') {
@@ -236,10 +275,21 @@ export class TicketsService {
         select: { id: true },
       });
 
-      return hodUsers.map((u) => u.id);
+      hodUsers.forEach((u) => managedIdsSet.add(u.id));
+
+      // Also include any indirect subordinates under users in HOD scope
+      const deptUserIds = hodUsers.map((u) => u.id);
+      const deptSubordinateIds = await HierarchyUtil.getSubordinateUserIds(
+        this.prisma,
+        deptUserIds,
+      );
+      deptSubordinateIds.forEach((id) => managedIdsSet.add(id));
+
+      return Array.from(managedIdsSet);
     }
 
-    return [user.id];
+    // Role 'user' or any other role: includes user themselves plus any subordinates reporting under them
+    return Array.from(managedIdsSet);
   }
 
   async create(
@@ -404,6 +454,15 @@ export class TicketsService {
       user.role === Role.super_admin ||
       user.role === Role.admin;
 
+    const managedUserIds = isAdminOrSuperAdmin ? [] : await this.getManagedUserIds(user);
+    const userHodDeptIds = user.role === Role.hod ? await this.getHodDepartmentIds(user) : [];
+    const managedSet = new Set(managedUserIds);
+    const userHodDeptSet = new Set(userHodDeptIds);
+    const attachCanReassign = (t: any) => ({
+      ...t,
+      can_reassign: this.computeCanReassign(t, user, managedSet, userHodDeptSet),
+    });
+
     const filterType = (query.type || query.scope)?.trim().toLowerCase();
 
     if (isAdminOrSuperAdmin) {
@@ -413,9 +472,6 @@ export class TicketsService {
         filters.push({ assigned_to: user.id });
       }
     } else {
-      const managedUserIds = await this.getManagedUserIds(user);
-      const userHodDeptIds = user.role === Role.hod ? await this.getHodDepartmentIds(user) : [];
-
       if (filterType === 'raised_by_me' || filterType === 'created_by_me') {
         filters.push({ user_id: { in: managedUserIds } });
       } else if (filterType === 'raised_on_me' || filterType === 'assigned_to_me') {
@@ -518,7 +574,7 @@ export class TicketsService {
       }
 
       const skip = (page - 1) * limit;
-      const paginatedTickets = filtered.slice(skip, skip + limit);
+      const paginatedTickets = filtered.slice(skip, skip + limit).map(attachCanReassign);
       return PaginationUtil.buildPaginatedResult(paginatedTickets, totalCount, page, limit);
     }
 
@@ -540,7 +596,9 @@ export class TicketsService {
       include: this.getTicketIncludeRelations(),
     });
 
-    return PaginationUtil.buildPaginatedResult(tickets, totalCount, page, limit);
+    const resultTickets = tickets.map(attachCanReassign);
+
+    return PaginationUtil.buildPaginatedResult(resultTickets, totalCount, page, limit);
   }
 
   async findOne(id: number, currentUser?: any) {
@@ -560,6 +618,8 @@ export class TicketsService {
       throw new NotFoundException(`Ticket with ID "${id}" not found.`);
     }
 
+    let canReassign = false;
+
     if (currentUser) {
       const isAdminOrSuperAdmin =
         String(currentUser.role).toLowerCase() === 'super_admin' ||
@@ -576,6 +636,14 @@ export class TicketsService {
         if (!hasAccess) {
           throw new ForbiddenException("Access Restricted: You don't have permission to perform this action.");
         }
+        canReassign = this.computeCanReassign(
+          ticket,
+          currentUser,
+          new Set(managedUserIds),
+          new Set(userHodDeptIds),
+        );
+      } else {
+        canReassign = true;
       }
     }
 
@@ -586,6 +654,7 @@ export class TicketsService {
 
     return {
       ...ticket,
+      can_reassign: canReassign,
       attachments: formattedAttachments,
     };
   }
@@ -656,9 +725,32 @@ export class TicketsService {
   async reassignTicket(
     id: number,
     dto: ReassignTicketDto,
-    currentUserId: number,
+    currentUserOrId: any,
   ) {
-    const ticket = await this.findOne(id);
+    const currentUserId = typeof currentUserOrId === 'object' ? currentUserOrId.id : currentUserOrId;
+    const currentUser = typeof currentUserOrId === 'object' ? currentUserOrId : null;
+    const ticket = await this.findOne(id, currentUser);
+
+    if (currentUser) {
+      const isAdminOrSuperAdmin =
+        String(currentUser.role).toLowerCase() === 'super_admin' ||
+        String(currentUser.role).toLowerCase() === 'admin';
+      if (!isAdminOrSuperAdmin) {
+        const managedUserIds = await this.getManagedUserIds(currentUser);
+        const userHodDeptIds = currentUser.role === Role.hod ? await this.getHodDepartmentIds(currentUser) : [];
+        const canReassign = this.computeCanReassign(
+          ticket,
+          currentUser,
+          new Set(managedUserIds),
+          new Set(userHodDeptIds),
+        );
+        if (!canReassign) {
+          throw new ForbiddenException(
+            "Access Restricted: You don't have permission to reassign this ticket.",
+          );
+        }
+      }
+    }
 
     if (
       ticket.status === TicketStatus.resolved ||
@@ -863,10 +955,33 @@ export class TicketsService {
   async update(
     id: number,
     dto: UpdateTicketDto,
-    userId: number,
+    currentUserOrId: any,
     files?: Express.Multer.File[],
   ) {
-    const ticket = await this.findOne(id);
+    const userId = typeof currentUserOrId === 'object' ? currentUserOrId.id : currentUserOrId;
+    const currentUser = typeof currentUserOrId === 'object' ? currentUserOrId : null;
+    const ticket = await this.findOne(id, currentUser);
+
+    if (currentUser && dto.assigned_to !== undefined && dto.assigned_to !== ticket.assigned_to) {
+      const isAdminOrSuperAdmin =
+        String(currentUser.role).toLowerCase() === 'super_admin' ||
+        String(currentUser.role).toLowerCase() === 'admin';
+      if (!isAdminOrSuperAdmin) {
+        const managedUserIds = await this.getManagedUserIds(currentUser);
+        const userHodDeptIds = currentUser.role === Role.hod ? await this.getHodDepartmentIds(currentUser) : [];
+        const canReassign = this.computeCanReassign(
+          ticket,
+          currentUser,
+          new Set(managedUserIds),
+          new Set(userHodDeptIds),
+        );
+        if (!canReassign) {
+          throw new ForbiddenException(
+            "Access Restricted: You don't have permission to reassign this ticket.",
+          );
+        }
+      }
+    }
 
     if (
       ticket.status === TicketStatus.resolved ||
