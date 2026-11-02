@@ -179,4 +179,114 @@ export class HierarchyUtil {
 
     return uniqueCcEmails;
   }
+
+  /**
+   * Traverses downwards through the reporting manager hierarchy:
+   * e.g., Emp3 -> Emp2 (Emp3's direct report) -> Emp1 (Emp2's direct report) -> ...
+   * Collects all subordinate user IDs reporting directly or indirectly to the manager(s).
+   *
+   * @param prisma Prisma database client
+   * @param managerIdOrIds Starting manager ID or array of manager IDs
+   * @param maxDepth Safeguard against cycles or overly deep chains (default: 15)
+   * @returns Array of unique subordinate user IDs (excluding the starting manager IDs)
+   */
+  static async getSubordinateUserIds(
+    prisma: PrismaService,
+    managerIdOrIds?: number | number[] | null,
+    maxDepth: number = 15,
+  ): Promise<number[]> {
+    if (!managerIdOrIds) return [];
+
+    const startingIds = Array.isArray(managerIdOrIds)
+      ? managerIdOrIds.filter(
+          (id): id is number => typeof id === 'number' && !isNaN(id),
+        )
+      : [managerIdOrIds].filter(
+          (id): id is number => typeof id === 'number' && !isNaN(id),
+        );
+
+    if (startingIds.length === 0) return [];
+
+    const subordinateIds: number[] = [];
+    const visitedUserIds = new Set<number>(startingIds);
+    let currentLevelIds = [...startingIds];
+    let depth = 0;
+
+    while (currentLevelIds.length > 0 && depth < maxDepth) {
+      const nextLevelUsers = await prisma.user.findMany({
+        where: {
+          reporting_manager_id: { in: currentLevelIds },
+        },
+        select: { id: true },
+      });
+
+      if (nextLevelUsers.length === 0) {
+        break;
+      }
+
+      const nextLevelIds: number[] = [];
+      for (const u of nextLevelUsers) {
+        if (!visitedUserIds.has(u.id)) {
+          visitedUserIds.add(u.id);
+          subordinateIds.push(u.id);
+          nextLevelIds.push(u.id);
+        }
+      }
+
+      currentLevelIds = nextLevelIds;
+      depth++;
+    }
+
+    return subordinateIds;
+  }
+
+  /**
+   * Checks if managerId is a direct or indirect reporting manager of userId
+   * by traversing upwards from userId along the reporting_manager_id chain.
+   *
+   * @param prisma Prisma database client
+   * @param userId Subordinate user ID
+   * @param managerId Higher-level manager ID to check
+   * @param maxDepth Safeguard against cycles (default: 15)
+   * @returns boolean indicating if managerId is in the hierarchy above userId
+   */
+  static async isManagerAboveUser(
+    prisma: PrismaService,
+    userId?: number | null,
+    managerId?: number | null,
+    maxDepth: number = 15,
+  ): Promise<boolean> {
+    if (!userId || !managerId) return false;
+    if (userId === managerId) return true;
+
+    const visitedUserIds = new Set<number>([userId]);
+    let currentUserId: number | null = userId;
+    let depth = 0;
+
+    while (currentUserId && depth < maxDepth) {
+      const user = await prisma.user.findUnique({
+        where: { id: currentUserId },
+        select: { reporting_manager_id: true },
+      });
+
+      if (!user || !user.reporting_manager_id) {
+        break;
+      }
+
+      if (user.reporting_manager_id === managerId) {
+        return true;
+      }
+
+      if (visitedUserIds.has(user.reporting_manager_id)) {
+        break;
+      }
+
+      visitedUserIds.add(user.reporting_manager_id);
+      currentUserId = user.reporting_manager_id;
+      depth++;
+    }
+
+    return false;
+  }
 }
+

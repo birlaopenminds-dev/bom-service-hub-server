@@ -118,7 +118,7 @@ export class TicketsController {
 
   @Patch(':id/reassign')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.admin, Role.manager, Role.hod)
+  @Roles(Role.super_admin, Role.admin, Role.manager, Role.hod)
   @ApiOperation({ summary: 'Reassign ticket to another technician or manager' })
   @ApiParam({ name: 'id', type: Number, description: 'Ticket ID' })
   @ApiResponse({ status: 200, description: 'Ticket reassigned successfully' })
@@ -129,9 +129,9 @@ export class TicketsController {
   async reassign(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ReassignTicketDto,
-    @GetUser('id') userId: number,
+    @GetUser() user: any,
   ) {
-    return this.ticketsService.reassignTicket(id, dto, userId);
+    return this.ticketsService.reassignTicket(id, dto, user);
   }
 
   @Patch(':id/due-date')
@@ -197,9 +197,9 @@ export class TicketsController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateTicketDto,
-    @GetUser('id') userId: number,
+    @GetUser() user: any,
     @UploadedFiles() files?: Express.Multer.File[],
   ) {
-    return this.ticketsService.update(id, dto, userId, files);
+    return this.ticketsService.update(id, dto, user, files);
   }
 }
