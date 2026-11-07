@@ -174,22 +174,16 @@ async function main() {
     const tatHours = ticket.subcategory?.tat_hours || 24;
     const oldDueAt = new Date(ticket.due_at);
 
-    // CRITICAL FILTER: Only touch tickets whose expiry is on the UPCOMING weekend and holidays (not previous/past)
+    // CRITICAL FILTER: Only touch tickets whose expiry is in the future (not past/previous)
     const isUpcoming = oldDueAt >= now;
-    const isNonWorking = calculator.isNonWorkingDay(oldDueAt);
 
     if (!isUpcoming) {
       skippedPastCount++;
       continue; // Expiry was in the past -> DO NOT TOUCH
     }
 
-    if (!isNonWorking) {
-      skippedValidWorkingDayCount++;
-      continue; // Expiry is already on a legitimate business working day -> DO NOT TOUCH
-    }
-
-    // Roll the upcoming weekend/holiday deadline forward to the next working business day
-    const newDueAt = calculator.rollForwardIfNonWorking(oldDueAt);
+    // Recalculate true business SLA due date from creation date, skipping all weekends and holidays
+    const newDueAt = calculator.calculateSlaDueDate(new Date(ticket.created_at), tatHours);
 
     const oldTime = oldDueAt.getTime();
     const newTime = newDueAt.getTime();
@@ -197,17 +191,21 @@ async function main() {
     // Check if difference is greater than 1 minute (to avoid tiny millisecond drift)
     const isDifferent = Math.abs(newTime - oldTime) > 60 * 1000;
 
+    if (!isDifferent) {
+      skippedValidWorkingDayCount++;
+      continue; // Already accurate -> DO NOT TOUCH
+    }
+
     const willPrematureEscalationReset =
       ticket.escalated_at && resetPrematureEscalation && now < newDueAt;
 
-    if (isDifferent || willPrematureEscalationReset) {
-      modifiedCount++;
+    modifiedCount++;
 
-      console.log(`Ticket: ${ticket.ticket_no} (ID: ${ticket.id}) [Status: ${ticket.status.toUpperCase()}]`);
-      console.log(`  Subcategory: ${ticket.subcategory?.name || 'N/A'} (TAT: ${tatHours}h)`);
-      console.log(`  Created At : ${ticket.created_at.toISOString()}`);
-      console.log(`  Old Due At : ${oldDueAt.toISOString()} ⚠️ [UPCOMING WEEKEND/HOLIDAY]`);
-      console.log(`  New Due At : ${newDueAt.toISOString()} ✅ [ADJUSTED TO NEXT BUSINESS WORKING DAY]`);
+    console.log(`Ticket: ${ticket.ticket_no} (ID: ${ticket.id}) [Status: ${ticket.status.toUpperCase()}]`);
+    console.log(`  Subcategory: ${ticket.subcategory?.name || 'N/A'} (TAT: ${tatHours}h / ${tatHours / 24} business days)`);
+    console.log(`  Created At : ${ticket.created_at.toISOString()}`);
+    console.log(`  Old Due At : ${oldDueAt.toISOString()} ⚠️ [DID NOT ACCOUNT FOR FULL WORKING DAYS]`);
+    console.log(`  New Due At : ${newDueAt.toISOString()} ✅ [EXACT WORKING BUSINESS DAYS]`);
 
       if (ticket.escalated_at) {
         if (willPrematureEscalationReset) {
@@ -256,7 +254,6 @@ async function main() {
       }
 
       console.log('');
-    }
   }
 
   console.log('------------------------------------------------------------------------');
