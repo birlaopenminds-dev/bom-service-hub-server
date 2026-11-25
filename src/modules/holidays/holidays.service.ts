@@ -10,6 +10,7 @@ import { CreateHolidayDto } from './dto/create-holiday.dto';
 import { UpdateHolidayDto } from './dto/update-holiday.dto';
 import { ListHolidaysDto } from './dto/list-holidays.dto';
 import { format, addDays, parseISO, isValid } from 'date-fns';
+import { TicketStatus } from '@prisma/client';
 import { PaginationUtil } from '../../common/utils/pagination.util';
 
 @Injectable()
@@ -114,6 +115,81 @@ export class HolidaysService implements OnModuleInit {
       curr = addDays(curr, 1);
     }
     return curr;
+  }
+
+  /**
+   * If a date falls on a weekend or active holiday, rolls it forward to the
+   * next working business day while preserving the original time of day.
+   */
+  rollForwardIfNonWorking(date: Date): Date {
+    const curr = new Date(date);
+    if (!this.isNonWorkingDay(curr)) {
+      return curr;
+    }
+
+    const nextWorking = this.getNextWorkingDay(curr);
+    nextWorking.setHours(
+      curr.getHours(),
+      curr.getMinutes(),
+      curr.getSeconds(),
+      curr.getMilliseconds(),
+    );
+    return nextWorking;
+  }
+
+  /**
+   * Extends upcoming open/wip ticket due dates when active holidays change so
+   * newly declared holidays do not trigger premature SLA breach escalations.
+   */
+  async syncUpcomingTicketsWithHolidays(): Promise<number> {
+    const now = new Date();
+    const activeTickets = await this.prisma.ticket.findMany({
+      where: {
+        status: { in: [TicketStatus.open, TicketStatus.wip] },
+        due_at: { gte: now },
+      },
+      include: {
+        subcategory: { select: { tat_hours: true } },
+        logs: {
+          where: { action: { in: ['DUE_DATE_UPDATED', 'SLA_DUE_DATE_UPDATED'] } },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+
+    let updatedCount = 0;
+    for (const ticket of activeTickets) {
+      const oldDueAt = new Date(ticket.due_at);
+      const hasManualOverride = ticket.logs.length > 0;
+      const newDueAt = hasManualOverride
+        ? this.rollForwardIfNonWorking(oldDueAt)
+        : this.calculateSlaDueDate(
+            new Date(ticket.created_at),
+            ticket.subcategory?.tat_hours || 24,
+          );
+
+      if (newDueAt.getTime() <= oldDueAt.getTime() + 60 * 1000) {
+        continue;
+      }
+
+      const resetEscalation = Boolean(ticket.escalated_at) && now < newDueAt;
+      await this.prisma.ticket.update({
+        where: { id: ticket.id },
+        data: {
+          due_at: newDueAt,
+          ...(resetEscalation && { escalated_at: null }),
+        },
+      });
+      updatedCount++;
+    }
+
+    if (updatedCount > 0) {
+      this.logger.log(
+        `Extended SLA due_at for ${updatedCount} active ticket(s) after holiday calendar update.`,
+      );
+    }
+    return updatedCount;
   }
 
   /**
@@ -253,6 +329,9 @@ export class HolidaysService implements OnModuleInit {
 
     // Invalidate and refresh cache immediately
     await this.refreshHolidayCache();
+    if (holiday.is_active) {
+      await this.syncUpcomingTicketsWithHolidays();
+    }
 
     return {
       message: 'Holiday created successfully',
@@ -346,6 +425,9 @@ export class HolidaysService implements OnModuleInit {
       data: { is_active: !holiday.is_active },
     });
     await this.refreshHolidayCache();
+    if (updated.is_active) {
+      await this.syncUpcomingTicketsWithHolidays();
+    }
     return {
       message: `Holiday status updated to ${updated.is_active ? 'active' : 'inactive'} successfully.`,
       data: updated,
@@ -384,6 +466,9 @@ export class HolidaysService implements OnModuleInit {
     });
 
     await this.refreshHolidayCache();
+    if (updated.is_active) {
+      await this.syncUpcomingTicketsWithHolidays();
+    }
 
     return {
       message: 'Holiday updated successfully',

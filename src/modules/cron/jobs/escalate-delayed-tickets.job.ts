@@ -47,6 +47,18 @@ export class EscalateDelayedTicketsJob {
     });
 
     for (const ticket of overdueTickets) {
+      // Guard against due_at landing on a weekend or newly added holiday
+      if (this.holidaysService.isNonWorkingDay(ticket.due_at)) {
+        const adjustedDueAt = this.holidaysService.rollForwardIfNonWorking(ticket.due_at);
+        if (adjustedDueAt > now) {
+          await this.prisma.ticket.update({
+            where: { id: ticket.id },
+            data: { due_at: adjustedDueAt },
+          });
+          continue;
+        }
+      }
+
       await this.prisma.ticket.update({
         where: { id: ticket.id },
         data: { escalated_at: now },
@@ -69,6 +81,7 @@ export class EscalateDelayedTicketsJob {
     const activeEscalatedTickets = await this.prisma.ticket.findMany({
       where: {
         escalated_at: { not: null },
+        due_at: { lt: now },
         NOT: { status: { in: [TicketStatus.resolved, TicketStatus.closed] } },
       },
       include: {
@@ -88,8 +101,27 @@ export class EscalateDelayedTicketsJob {
     for (const ticket of activeEscalatedTickets) {
       if (!ticket.escalated_at) continue;
 
-      const hasStage2Log = ticket.logs.some((l) => l.action === 'ESCALATED_48H_NOTICE');
-      const hasStage3Log = ticket.logs.some((l) => l.action === 'ESCALATED_72H_NOTICE');
+      if (this.holidaysService.isNonWorkingDay(ticket.due_at)) {
+        const adjustedDueAt = this.holidaysService.rollForwardIfNonWorking(ticket.due_at);
+        if (adjustedDueAt > now) {
+          await this.prisma.ticket.update({
+            where: { id: ticket.id },
+            data: { due_at: adjustedDueAt, escalated_at: null },
+          });
+          continue;
+        }
+      }
+
+      const hasStage2Log = this.hasNoticeForEscalationCycle(
+        ticket.logs,
+        'ESCALATED_48H_NOTICE',
+        ticket.escalated_at,
+      );
+      const hasStage3Log = this.hasNoticeForEscalationCycle(
+        ticket.logs,
+        'ESCALATED_72H_NOTICE',
+        ticket.escalated_at,
+      );
 
       // Calculate working deadlines based on escalated_at
       const stage2Deadline = this.holidaysService.addWorkingHours(ticket.escalated_at, 48);
@@ -144,6 +176,24 @@ export class EscalateDelayedTicketsJob {
       success: true,
       executedAt: now,
     };
+  }
+
+  private hasNoticeForEscalationCycle(
+    logs: Array<{ action: string; created_at: Date; details: any }>,
+    action: 'ESCALATED_48H_NOTICE' | 'ESCALATED_72H_NOTICE',
+    escalatedAt: Date,
+  ): boolean {
+    const escalatedTime = escalatedAt.getTime();
+    return logs.some((log) => {
+      if (log.action !== action) return false;
+      const loggedEscalatedAt = log.details?.escalated_at
+        ? new Date(log.details.escalated_at).getTime()
+        : null;
+      if (loggedEscalatedAt !== null && !Number.isNaN(loggedEscalatedAt)) {
+        return loggedEscalatedAt === escalatedTime;
+      }
+      return log.created_at.getTime() >= escalatedTime;
+    });
   }
 
   private async sendEscalationEmail(
