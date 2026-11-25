@@ -1,3 +1,5 @@
+process.env.TZ = process.env.TZ || 'Asia/Kolkata';
+
 import { PrismaClient, TicketStatus } from '@prisma/client';
 import { format, addDays, parseISO } from 'date-fns';
 
@@ -183,7 +185,12 @@ async function main() {
     }
 
     // Recalculate true business SLA due date from creation date, skipping all weekends and holidays
-    const newDueAt = calculator.calculateSlaDueDate(new Date(ticket.created_at), tatHours);
+    const hasManualDueDateUpdate = ticket.logs.length > 0;
+    const calculatedDueAt = calculator.calculateSlaDueDate(new Date(ticket.created_at), tatHours);
+    const newDueAt =
+      hasManualDueDateUpdate && calculatedDueAt < oldDueAt
+        ? calculator.rollForwardIfNonWorking(oldDueAt)
+        : calculatedDueAt;
 
     const oldTime = oldDueAt.getTime();
     const newTime = newDueAt.getTime();
@@ -207,53 +214,53 @@ async function main() {
     console.log(`  Old Due At : ${oldDueAt.toISOString()} ⚠️ [DID NOT ACCOUNT FOR FULL WORKING DAYS]`);
     console.log(`  New Due At : ${newDueAt.toISOString()} ✅ [EXACT WORKING BUSINESS DAYS]`);
 
-      if (ticket.escalated_at) {
-        if (willPrematureEscalationReset) {
-          prematureEscalationResetCount++;
-          console.log(`  Escalation : Currently escalated at ${ticket.escalated_at.toISOString()}. New due date is still in the future -> Escalation will be RESET to null.`);
-        } else {
-          console.log(`  Escalation : Currently escalated at ${ticket.escalated_at.toISOString()} and remains breached.`);
-        }
-      }
-
-      if (!isDryRun) {
-        // Prepare update payload
-        const updateData: any = {
-          due_at: newDueAt,
-        };
-
-        if (willPrematureEscalationReset) {
-          updateData.escalated_at = null;
-        }
-
-        await prisma.ticket.update({
-          where: { id: ticket.id },
-          data: updateData,
-        });
-
-        // Add Ticket Log audit entry
-        await prisma.ticketLog.create({
-          data: {
-            ticket_id: ticket.id,
-            user_id: ticket.user_id,
-            action: 'SLA_RECALCULATED_HOLIDAYS_FIX',
-            details: {
-              old_due_at: oldDueAt,
-              new_due_at: newDueAt,
-              tat_hours: tatHours,
-              previous_escalated_at: ticket.escalated_at,
-              escalation_reset: willPrematureEscalationReset,
-              reason: 'Recalculated SLA to exclude weekends and official company holidays.',
-            },
-          },
-        });
-
-        console.log(`  Status     : ✅ Updated in database.`);
+    if (ticket.escalated_at) {
+      if (willPrematureEscalationReset) {
+        prematureEscalationResetCount++;
+        console.log(`  Escalation : Currently escalated at ${ticket.escalated_at.toISOString()}. New due date is still in the future -> Escalation will be RESET to null.`);
       } else {
-        console.log(`  Status     : [DRY-RUN] Will be updated when run with --apply.`);
+        console.log(`  Escalation : Currently escalated at ${ticket.escalated_at.toISOString()} and remains breached.`);
+      }
+    }
+
+    if (!isDryRun) {
+      // Prepare update payload
+      const updateData: any = {
+        due_at: newDueAt,
+      };
+
+      if (willPrematureEscalationReset) {
+        updateData.escalated_at = null;
       }
 
-      console.log('');
+      await prisma.ticket.update({
+        where: { id: ticket.id },
+        data: updateData,
+      });
+
+      // Add Ticket Log audit entry
+      await prisma.ticketLog.create({
+        data: {
+          ticket_id: ticket.id,
+          user_id: ticket.user_id,
+          action: 'SLA_RECALCULATED_HOLIDAYS_FIX',
+          details: {
+            old_due_at: oldDueAt,
+            new_due_at: newDueAt,
+            tat_hours: tatHours,
+            previous_escalated_at: ticket.escalated_at,
+            escalation_reset: willPrematureEscalationReset,
+            reason: 'Recalculated SLA to exclude weekends and official company holidays.',
+          },
+        },
+      });
+
+      console.log(`  Status     : ✅ Updated in database.`);
+    } else {
+      console.log(`  Status     : [DRY-RUN] Will be updated when run with --apply.`);
+    }
+
+    console.log('');
   }
 
   console.log('------------------------------------------------------------------------');

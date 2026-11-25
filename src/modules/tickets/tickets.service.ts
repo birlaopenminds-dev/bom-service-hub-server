@@ -795,6 +795,25 @@ export class TicketsService {
     return updated;
   }
 
+  private async assertDueDateUpdateLimit(ticketId: number): Promise<void> {
+    const updateCount = await this.prisma.ticketLog.count({
+      where: {
+        ticket_id: ticketId,
+        action: { in: ['DUE_DATE_UPDATED', 'SLA_DUE_DATE_UPDATED'] },
+      },
+    });
+
+    if (updateCount >= 2) {
+      throw new BadRequestException(
+        'SLA Due Date for this ticket has already been updated 2 times (maximum limit reached). Further extensions are not allowed.',
+      );
+    }
+  }
+
+  private shouldResetEscalation(escalatedAt: Date | null | undefined, newDueDate: Date): boolean {
+    return Boolean(escalatedAt) && newDueDate.getTime() > Date.now();
+  }
+
   async updateDueDate(id: number, dto: UpdateDueDateDto, userId: number) {
     const ticket = await this.findOne(id);
 
@@ -818,22 +837,16 @@ export class TicketsService {
     }
 
     // Check SLA due date update count (Maximum 2 updates allowed per ticket)
-    const updateCount = await this.prisma.ticketLog.count({
-      where: {
-        ticket_id: id,
-        action: { in: ['DUE_DATE_UPDATED', 'SLA_DUE_DATE_UPDATED'] },
-      },
-    });
+    await this.assertDueDateUpdateLimit(id);
 
-    if (updateCount >= 2) {
-      throw new BadRequestException(
-        'SLA Due Date for this ticket has already been updated 2 times (maximum limit reached).',
-      );
-    }
+    const resetEscalation = this.shouldResetEscalation(ticket.escalated_at, newDueDate);
 
     const updated = await this.prisma.ticket.update({
       where: { id },
-      data: { due_at: newDueDate },
+      data: {
+        due_at: newDueDate,
+        ...(resetEscalation && { escalated_at: null }),
+      },
       include: this.getTicketIncludeRelations(),
     });
 
@@ -845,6 +858,8 @@ export class TicketsService {
         old_due_at: ticket.due_at,
         new_due_at: newDueDate,
         reason: dto.reason,
+        escalation_reset: resetEscalation,
+        ...(resetEscalation && { previous_escalated_at: ticket.escalated_at }),
       },
     });
 
@@ -999,26 +1014,21 @@ export class TicketsService {
 
     let isDueDateChanged = false;
     let newDueDateObj: Date | null = null;
+    let isEscalationReset = false;
 
     if (dto.due_date) {
       const newDueDate = new Date(dto.due_date);
       if (!isNaN(newDueDate.getTime()) && newDueDate.getTime() !== new Date(ticket.due_at).getTime()) {
-        const updateCount = await this.prisma.ticketLog.count({
-          where: {
-            ticket_id: id,
-            action: { in: ['DUE_DATE_UPDATED', 'SLA_DUE_DATE_UPDATED'] },
-          },
-        });
-
-        if (updateCount >= 2) {
-          throw new BadRequestException(
-            'SLA Due Date for this ticket has already been updated 2 times (maximum limit reached). Further extensions are not allowed.',
-          );
-        }
+        await this.assertDueDateUpdateLimit(id);
 
         updateData.due_at = newDueDate;
         isDueDateChanged = true;
         newDueDateObj = newDueDate;
+
+        if (this.shouldResetEscalation(ticket.escalated_at, newDueDate)) {
+          updateData.escalated_at = null;
+          isEscalationReset = true;
+        }
       }
     }
 
@@ -1066,6 +1076,8 @@ export class TicketsService {
         details: {
           old_due_at: ticket.due_at,
           new_due_at: newDueDateObj,
+          escalation_reset: isEscalationReset,
+          ...(isEscalationReset && { previous_escalated_at: ticket.escalated_at }),
         },
       });
     }
